@@ -1,0 +1,1 @@
+"""RSS landing ingestion service."""

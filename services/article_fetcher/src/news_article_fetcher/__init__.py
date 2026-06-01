@@ -1,0 +1,1 @@
+"""Article HTML fetcher service."""

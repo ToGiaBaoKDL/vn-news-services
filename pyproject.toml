@@ -1,0 +1,47 @@
+[project]
+name = "vn-news-services"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[tool.uv.workspace]
+members = [
+  "services/common",
+  "services/feed_ingestor",
+  "services/article_fetcher",
+  "services/article_extractor",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=9.0",
+  "ruff>=0.15",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = [
+  "services/common/src",
+  "services/feed_ingestor/src",
+  "services/article_fetcher/src",
+  "services/article_extractor/src",
+  "tests",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [
+  "services/common/src",
+  "services/feed_ingestor/src",
+  "services/article_fetcher/src",
+  "services/article_extractor/src",
+]

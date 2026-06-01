@@ -1,0 +1,21 @@
+[project]
+name = "news-feed-ingestor"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "defusedxml>=0.7.1",
+  "httpx>=0.28.1",
+  "news-platform-lib",
+  "news-service-common",
+]
+
+[tool.uv.sources]
+news-platform-lib = { path = "../../../vn-news-platform-lib", editable = true }
+news-service-common = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/news_feed_ingestor"]
