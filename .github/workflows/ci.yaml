@@ -26,7 +26,7 @@ jobs:
           path: vn-news-platform-lib
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8
+        uses: astral-sh/setup-uv@v8.1.0
         with:
           version: "0.11.17"
           python-version: "3.12"
