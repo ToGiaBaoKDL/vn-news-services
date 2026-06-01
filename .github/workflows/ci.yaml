@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out services
+        uses: actions/checkout@v6
+        with:
+          path: vn-news-services
+
+      - name: Check out platform library
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/vn-news-platform-lib
+          token: ${{ secrets.WORKSPACE_READ_TOKEN || github.token }}
+          path: vn-news-platform-lib
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          version: "0.11.17"
+          python-version: "3.12"
+          working-directory: vn-news-services
+
+      - name: Verify Python
+        working-directory: vn-news-services
+        run: |
+          uv sync --frozen --all-groups
+          uv lock --check
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run python -m pytest
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build worker images
+        working-directory: vn-news-services
+        run: |
+          for dockerfile in services/*/Dockerfile; do
+            service_name="$(basename "$(dirname "$dockerfile")")"
+            image_name="${service_name//_/-}"
+            docker buildx build \
+              --build-context vn-news-platform-lib=../vn-news-platform-lib \
+              --file "$dockerfile" \
+              --tag "local/vn-news-$image_name:ci" \
+              --load \
+              .
+          done

@@ -42,6 +42,13 @@ class ArticleExtractor:
         payload = run_stage(
             "payload_read", True, lambda: self.object_store.read_compressed(event.payload_uri)
         )
+        payload_hash = hashlib.sha256(payload).hexdigest()
+        if payload_hash != event.content_hash:
+            raise IngestionError(
+                stage="payload_read",
+                retryable=False,
+                message="Fetched article payload does not match its content hash",
+            )
         article_config = self.source.get("article", {})
         extractor_name = article_config.get("extractor", "html_article")
         if extractor_name != "html_article":

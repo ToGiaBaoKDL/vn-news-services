@@ -60,6 +60,7 @@ class ArticleFetcher:
             event.source_id,
             event.ingest_date,
             event.article_id,
+            source_document_id,
         )
         payload_exists = run_stage(
             "payload_write", True, lambda: self.object_store.exists(payload_uri)

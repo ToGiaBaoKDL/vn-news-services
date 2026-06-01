@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import httpx
 import pytest
 
 from news_feed_ingestor.adapters import HttpFeedClient
+from news_feed_ingestor.models import FeedCheckpoint
 from news_service_common.errors import FeedFetchError
 
 
@@ -62,6 +65,30 @@ def test_http_feed_client_rejects_not_modified_without_checkpoint() -> None:
 
     assert raised.value.retryable is False
     assert raised.value.status_code == 304
+
+
+def test_http_feed_client_ignores_validators_for_unpublished_checkpoint() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "if-none-match" not in request.headers
+        assert "if-modified-since" not in request.headers
+        return httpx.Response(200, content=b"<rss />", request=request)
+
+    checkpoint = FeedCheckpoint(
+        content_hash="hash",
+        payload_uri="s3://landing/feed.xml.zst",
+        observed_at=datetime(2026, 6, 1, tzinfo=UTC),
+        etag='"etag"',
+        last_modified="Mon, 01 Jun 2026 00:00:00 GMT",
+        events_published=False,
+        item_record_hashes={},
+    )
+
+    response = make_client(handler).fetch(
+        "https://vnexpress.net/rss/kinh-doanh.rss",
+        checkpoint,
+    )
+
+    assert response.status_code == 200
 
 
 def test_http_feed_client_rejects_oversized_response() -> None:

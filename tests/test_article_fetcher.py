@@ -45,6 +45,18 @@ class FakeObjectStore:
         self.checkpoints[uri] = value
 
 
+class CheckpointFailingObjectStore(FakeObjectStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_next_checkpoint_write = True
+
+    def write_json(self, uri: str, value: dict) -> None:
+        if self.fail_next_checkpoint_write:
+            self.fail_next_checkpoint_write = False
+            raise RuntimeError("checkpoint unavailable")
+        super().write_json(uri, value)
+
+
 class FakePublisher:
     def __init__(self) -> None:
         self.events: list[tuple[str, object]] = []
@@ -126,6 +138,32 @@ def test_article_fetcher_uses_new_payload_for_different_article() -> None:
 
     assert first.source_document_id != second.source_document_id
     assert first.payload_uri != second.payload_uri
+    assert len(store.payloads) == 2
+
+
+def test_article_fetcher_retry_after_checkpoint_failure_keeps_documents_immutable() -> None:
+    store = CheckpointFailingObjectStore()
+    publisher = FakePublisher()
+    fetcher = ArticleFetcher(
+        http_client=FakeHttpClient(b"<html>old</html>"),
+        object_store=store,
+        publisher=publisher,
+        storage_layout=layout(),
+    )
+    event = fetch_requested_event()
+
+    with pytest.raises(IngestionError) as raised:
+        fetcher.fetch(event, observed_at=datetime(2026, 6, 1, 3, tzinfo=UTC))
+
+    assert raised.value.stage == "checkpoint_write"
+    fetcher.http_client = FakeHttpClient(b"<html>new</html>")
+    second = fetcher.fetch(event, observed_at=datetime(2026, 6, 1, 4, tzinfo=UTC))
+
+    first_published = publisher.events[0][1]
+    second_published = publisher.events[1][1]
+    assert first_published.source_document_id != second.source_document_id
+    assert first_published.payload_uri != second.payload_uri
+    assert second_published.payload_uri == second.payload_uri
     assert len(store.payloads) == 2
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, date, datetime
 
 import pytest
@@ -133,7 +134,7 @@ def test_article_extractor_requires_canonical_url_when_configured() -> None:
     )
 
     with pytest.raises(IngestionError) as raised:
-        extractor.extract(fetched_event())
+        extractor.extract(fetched_event(html))
 
     assert raised.value.stage == "article_extract"
     assert raised.value.retryable is False
@@ -141,15 +142,29 @@ def test_article_extractor_requires_canonical_url_when_configured() -> None:
 
 
 def test_article_extractor_rejects_missing_body() -> None:
+    html = b"<html><head><title>Only title</title></head></html>"
     extractor = ArticleExtractor(
-        object_store=FakeObjectStore(b"<html><head><title>Only title</title></head></html>"),
+        object_store=FakeObjectStore(html),
+        publisher=FakePublisher(),
+    )
+
+    with pytest.raises(IngestionError) as raised:
+        extractor.extract(fetched_event(html))
+
+    assert raised.value.stage == "article_extract"
+    assert raised.value.retryable is False
+
+
+def test_article_extractor_rejects_payload_hash_mismatch() -> None:
+    extractor = ArticleExtractor(
+        object_store=FakeObjectStore(b"<html>unexpected</html>"),
         publisher=FakePublisher(),
     )
 
     with pytest.raises(IngestionError) as raised:
         extractor.extract(fetched_event())
 
-    assert raised.value.stage == "article_extract"
+    assert raised.value.stage == "payload_read"
     assert raised.value.retryable is False
 
 
@@ -164,7 +179,7 @@ def test_article_extractor_rejects_failed_fetch_event() -> None:
     assert raised.value.retryable is False
 
 
-def fetched_event() -> ArticleFetched:
+def fetched_event(payload: bytes = HTML) -> ArticleFetched:
     return ArticleFetched(
         schema_version="article.fetched.v2",
         event_id="event_article_fetched",
@@ -180,6 +195,6 @@ def fetched_event() -> ArticleFetched:
         content_type="text/html",
         content_length_bytes=len(HTML),
         payload_uri="s3://tgb-prod-landing-a7k3p9/payloads/article_html/a.html.zst",
-        content_hash="abc123",
+        content_hash=hashlib.sha256(payload).hexdigest(),
         fetch_status="success",
     )
