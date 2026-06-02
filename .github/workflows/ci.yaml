@@ -35,7 +35,7 @@ jobs:
       - name: Verify Python
         working-directory: vn-news-services
         run: |
-          uv sync --frozen --all-groups
+          uv sync --frozen --all-groups --all-packages
           uv lock --check
           uv run ruff check .
           uv run ruff format --check .
