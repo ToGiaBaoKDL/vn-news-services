@@ -6,15 +6,15 @@ from urllib.parse import urlparse
 
 import boto3
 import zstandard
-from botocore import UNSIGNED
-from botocore.client import Config
 from botocore.exceptions import ClientError
 
 
 class S3PayloadStore:
-    def __init__(self, *, endpoint_url: str, anonymous: bool = False) -> None:
-        config = Config(signature_version=UNSIGNED) if anonymous else Config()
-        self.client = boto3.client("s3", endpoint_url=endpoint_url, config=config)
+    def __init__(self, *, endpoint_url: str) -> None:
+        self.client = boto3.client("s3", endpoint_url=endpoint_url)
+
+    def check_bucket(self, bucket: str) -> None:
+        self.client.head_bucket(Bucket=bucket)
 
     def exists(self, uri: str) -> bool:
         bucket, key = split_s3_uri(uri)

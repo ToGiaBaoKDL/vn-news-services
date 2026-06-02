@@ -240,7 +240,7 @@ def test_scrape_republishes_changed_item_record() -> None:
     assert publisher.events[0][1].feed_item_id == publisher.events[2][1].feed_item_id
     assert publisher.events[0][1].event_id != publisher.events[2][1].event_id
     assert publisher.events[1][1].article_id == publisher.events[3][1].article_id
-    assert publisher.events[1][1].event_id == publisher.events[3][1].event_id
+    assert publisher.events[1][1].event_id != publisher.events[3][1].event_id
 
 
 def test_same_article_in_different_feeds_gets_feed_aware_event_ids() -> None:

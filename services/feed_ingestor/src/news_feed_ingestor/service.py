@@ -261,6 +261,7 @@ class FeedIngestor:
             item=item,
             run_id=run_id,
             event_time=checkpoint.observed_at,
+            request_revision=record_hash,
         )
 
     def _publish_fetch_request(
@@ -270,15 +271,17 @@ class FeedIngestor:
         item: FeedItem,
         run_id: str,
         event_time: datetime,
+        request_revision: str,
     ) -> None:
         requested_url = normalize_article_url(item.article_url)
         article_id = make_stable_id("article", requested_url)
         fetch_event = ArticleFetchRequested(
-            schema_version="article.fetch_requested.v2",
+            schema_version="article.fetch_requested.v3",
             event_id=make_stable_id(
                 "event",
-                "article.fetch_requested.v2",
+                "article.fetch_requested.v3",
                 article_id,
+                request_revision,
             ),
             event_time=event_time,
             run_id=run_id,
@@ -286,6 +289,7 @@ class FeedIngestor:
             ingest_date=event_time.date(),
             article_id=article_id,
             requested_url=requested_url,
+            request_revision=request_revision,
         )
         self.publisher.publish("article_fetch_requested", fetch_event)
 

@@ -57,7 +57,6 @@ def run() -> int:
             True,
             lambda: S3PayloadStore(
                 endpoint_url=config["storage"]["endpoint_url"],
-                anonymous=config["storage"].get("anonymous", False),
             ),
         )
     except Exception as error:

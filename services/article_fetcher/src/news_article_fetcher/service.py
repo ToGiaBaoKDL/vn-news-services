@@ -37,7 +37,10 @@ class ArticleFetcher:
         observed_at: datetime | None = None,
     ) -> ArticleFetchOutcome:
         observed_at = observed_at or datetime.now(UTC)
-        checkpoint_uri = self.storage_layout.article_fetch_checkpoint_uri(event.article_id)
+        checkpoint_uri = self.storage_layout.article_fetch_checkpoint_uri(
+            event.article_id,
+            event.request_revision,
+        )
         checkpoint = run_stage(
             "checkpoint_read",
             True,

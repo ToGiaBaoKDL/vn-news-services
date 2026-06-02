@@ -54,7 +54,7 @@ def test_event_message_keys_preserve_aggregate_ordering() -> None:
         record_hash="hash_1",
     )
     fetch = ArticleFetchRequested(
-        schema_version="article.fetch_requested.v2",
+        schema_version="article.fetch_requested.v3",
         event_id="event_2",
         event_time=datetime(2026, 6, 1, 2, tzinfo=UTC),
         run_id="rss_run_1",
@@ -62,6 +62,7 @@ def test_event_message_keys_preserve_aggregate_ordering() -> None:
         ingest_date=date(2026, 6, 1),
         article_id="article_1",
         requested_url="https://vnexpress.net/a.html",
+        request_revision="record_1",
     )
 
     assert event_message_key("feed_item_discovered", discovered) == "feed_item_1"
@@ -118,7 +119,7 @@ def test_retryable_consumed_error_does_not_commit_offset() -> None:
 
 def test_make_dlq_event_is_stable_for_same_source_message() -> None:
     first = make_dlq_event(
-        source_topic="news.article.fetch_requested.v2",
+        source_topic="news.article.fetch_requested.v3",
         source_partition=0,
         source_offset=10,
         error_class="ValueError",
@@ -126,7 +127,7 @@ def test_make_dlq_event_is_stable_for_same_source_message() -> None:
         payload={"article_id": "article_1"},
     )
     second = make_dlq_event(
-        source_topic="news.article.fetch_requested.v2",
+        source_topic="news.article.fetch_requested.v3",
         source_partition=0,
         source_offset=10,
         error_class="ValueError",
@@ -146,7 +147,7 @@ class FakeMessage:
         return self._value
 
     def topic(self) -> str:
-        return "news.article.fetch_requested.v2"
+        return "news.article.fetch_requested.v3"
 
     def partition(self) -> int:
         return 0

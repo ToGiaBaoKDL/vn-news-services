@@ -114,6 +114,30 @@ def test_article_fetcher_does_not_refetch_completed_article() -> None:
     assert len(publisher.events) == 1
 
 
+def test_article_fetcher_refetches_article_for_new_request_revision() -> None:
+    store = FakeObjectStore()
+    publisher = FakePublisher()
+    fetcher = ArticleFetcher(
+        http_client=FakeHttpClient(b"<html>old</html>"),
+        object_store=store,
+        publisher=publisher,
+        storage_layout=layout(),
+    )
+    event = fetch_requested_event()
+
+    first = fetcher.fetch(event, observed_at=datetime(2026, 6, 1, 3, tzinfo=UTC))
+    fetcher.http_client = FakeHttpClient(b"<html>new</html>")
+    second = fetcher.fetch(
+        event.model_copy(update={"request_revision": "record_2"}),
+        observed_at=datetime(2026, 6, 1, 4, tzinfo=UTC),
+    )
+
+    assert first.source_document_id != second.source_document_id
+    assert first.payload_uri != second.payload_uri
+    assert len(store.payloads) == 2
+    assert len(publisher.events) == 2
+
+
 def test_article_fetcher_uses_new_payload_for_different_article() -> None:
     store = FakeObjectStore()
     publisher = FakePublisher()
@@ -169,7 +193,7 @@ def test_article_fetcher_retry_after_checkpoint_failure_keeps_documents_immutabl
 
 def test_article_fetcher_rejects_corrupt_completion_checkpoint() -> None:
     store = FakeObjectStore()
-    store.checkpoints[layout().article_fetch_checkpoint_uri("article_1")] = {}
+    store.checkpoints[layout().article_fetch_checkpoint_uri("article_1", "record_1")] = {}
     fetcher = ArticleFetcher(
         http_client=FakeHttpClient(),
         object_store=store,
@@ -233,7 +257,7 @@ def test_article_http_client_rejects_oversized_response() -> None:
 
 def fetch_requested_event() -> ArticleFetchRequested:
     return ArticleFetchRequested(
-        schema_version="article.fetch_requested.v2",
+        schema_version="article.fetch_requested.v3",
         event_id="event_fetch_request",
         event_time=datetime(2026, 6, 1, 2, tzinfo=UTC),
         run_id="rss_run_1",
@@ -241,6 +265,7 @@ def fetch_requested_event() -> ArticleFetchRequested:
         ingest_date=date(2026, 6, 1),
         article_id="article_1",
         requested_url="https://vnexpress.net/a.html",
+        request_revision="record_1",
     )
 
 

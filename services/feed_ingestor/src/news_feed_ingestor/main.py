@@ -66,7 +66,6 @@ def scrape(args: argparse.Namespace) -> int:
             True,
             lambda: S3PayloadStore(
                 endpoint_url=config["storage"]["endpoint_url"],
-                anonymous=config["storage"].get("anonymous", False),
             ),
         )
         publisher = run_stage("event_bus_connect", True, lambda: JsonEventPublisher(config))
