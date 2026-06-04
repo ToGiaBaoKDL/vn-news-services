@@ -33,7 +33,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV VN_NEWS_CONFIG_DIR=/app/configs
 
-RUN addgroup --system app && adduser --system --ingroup app app
+RUN addgroup --system --gid 10001 app \
+    && adduser --system --uid 10001 --ingroup app --home /app --no-create-home app
 
 COPY --from=builder /app/.venv /app/.venv
 
