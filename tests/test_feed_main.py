@@ -7,7 +7,7 @@ from news_feed_ingestor import main as feed_main
 from news_service_common.errors import IngestionError
 
 
-def test_scrape_all_feeds_continues_after_feed_failure(monkeypatch) -> None:
+def test_scrape_all_feeds_succeeds_with_partial_nonfatal_failures(monkeypatch) -> None:
     source = {
         "source_id": "vnexpress",
         "enabled": True,
@@ -29,7 +29,7 @@ def test_scrape_all_feeds_continues_after_feed_failure(monkeypatch) -> None:
         "scrape_feed",
         lambda **kwargs: (
             visited_feed_ids.append(kwargs["feed"]["feed_id"])
-            or int(kwargs["feed"]["feed_id"] == "kinh_doanh")
+            or ((True, False) if kwargs["feed"]["feed_id"] == "kinh_doanh" else (False, False))
         ),
     )
     monkeypatch.setattr(feed_main.time, "sleep", lambda seconds: None)
@@ -41,20 +41,76 @@ def test_scrape_all_feeds_continues_after_feed_failure(monkeypatch) -> None:
 
     result = feed_main.scrape(make_args(all_feeds=True))
 
-    assert result == 1
+    assert result == 0
     assert visited_feed_ids == ["kinh_doanh", "thoi_su"]
     assert logs[-1] == (
         "rss_source_completed",
         {
             "source_id": "vnexpress",
             "feed_count": 2,
+            "successful_feed_count": 1,
             "failed_feed_count": 1,
+            "fatal_feed_count": 0,
             "dry_run": True,
         },
     )
 
 
-def test_scrape_feed_logs_unconsumed_failure(monkeypatch, capsys) -> None:
+def test_scrape_all_feeds_fails_when_every_feed_fails(monkeypatch) -> None:
+    source = {
+        "source_id": "vnexpress",
+        "enabled": True,
+        "crawl": {"delay_seconds": 0},
+        "feed_discovery": {
+            "feeds": [
+                {"feed_id": "kinh_doanh"},
+                {"feed_id": "thoi_su"},
+            ]
+        },
+    }
+
+    monkeypatch.setattr(feed_main, "load_settings", lambda: {"crawl": {"retry": {}}})
+    monkeypatch.setattr(feed_main, "load_sources", lambda settings: [source])
+    monkeypatch.setattr(feed_main, "scrape_feed", lambda **kwargs: (True, False))
+    monkeypatch.setattr(feed_main.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(feed_main, "log_event", lambda *args, **kwargs: None)
+
+    result = feed_main.scrape(make_args(all_feeds=True))
+
+    assert result == 1
+
+
+def test_scrape_all_feeds_fails_on_fatal_failure(monkeypatch) -> None:
+    source = {
+        "source_id": "vnexpress",
+        "enabled": True,
+        "crawl": {"delay_seconds": 0},
+        "feed_discovery": {
+            "feeds": [
+                {"feed_id": "kinh_doanh"},
+                {"feed_id": "thoi_su"},
+            ]
+        },
+    }
+
+    monkeypatch.setattr(feed_main, "load_settings", lambda: {"crawl": {"retry": {}}})
+    monkeypatch.setattr(feed_main, "load_sources", lambda settings: [source])
+    monkeypatch.setattr(
+        feed_main,
+        "scrape_feed",
+        lambda **kwargs: (
+            (True, True) if kwargs["feed"]["feed_id"] == "kinh_doanh" else (False, False)
+        ),
+    )
+    monkeypatch.setattr(feed_main.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(feed_main, "log_event", lambda *args, **kwargs: None)
+
+    result = feed_main.scrape(make_args(all_feeds=True))
+
+    assert result == 1
+
+
+def test_scrape_feed_logs_retryable_failure_as_fatal(monkeypatch, capsys) -> None:
     def fail(**kwargs) -> None:
         raise IngestionError(
             stage="feed_fetch",
@@ -74,13 +130,40 @@ def test_scrape_feed_logs_unconsumed_failure(monkeypatch, capsys) -> None:
         publisher=None,
     )
 
-    assert result == 1
+    assert result == (True, True)
     record = json.loads(capsys.readouterr().err)
     assert record["event"] == "rss_feed_failed"
     assert record["source_id"] == "vnexpress"
     assert record["feed_id"] == "kinh_doanh"
     assert record["stage"] == "feed_fetch"
     assert record["retryable"] is True
+
+
+def test_scrape_feed_logs_nonretryable_failure_as_nonfatal(monkeypatch, capsys) -> None:
+    def fail(**kwargs) -> None:
+        raise IngestionError(
+            stage="feed_parse",
+            retryable=False,
+            message="empty RSS feed",
+        )
+
+    monkeypatch.setattr(feed_main, "_scrape_feed", fail)
+
+    result = feed_main.scrape_feed(
+        args=make_args(),
+        config={},
+        source={"source_id": "vnexpress"},
+        feed={"feed_id": "kinh_doanh"},
+        retry={},
+        object_store=None,
+        publisher=None,
+    )
+
+    assert result == (True, False)
+    record = json.loads(capsys.readouterr().err)
+    assert record["event"] == "rss_feed_failed"
+    assert record["stage"] == "feed_parse"
+    assert record["retryable"] is False
 
 
 def make_args(*, all_feeds: bool = False) -> Namespace:

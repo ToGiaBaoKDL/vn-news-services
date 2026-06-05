@@ -11,6 +11,7 @@ from news_feed_ingestor.adapters import HttpFeedClient
 from news_feed_ingestor.rss import parse_rss_items
 from news_feed_ingestor.service import FeedIngestor
 from news_service_common.config import select_enabled_source, select_feed
+from news_service_common.errors import IngestionError
 from news_service_common.events import JsonEventPublisher
 from news_service_common.runtime import elapsed_ms, handle_unconsumed_error
 from news_service_common.stages import run_stage
@@ -78,8 +79,10 @@ def scrape(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     )
     failed_feed_count = 0
+    fatal_feed_count = 0
+    successful_feed_count = 0
     for index, feed in enumerate(feeds):
-        failed_feed_count += scrape_feed(
+        feed_failed, feed_fatal = scrape_feed(
             args=args,
             config=config,
             source=source,
@@ -88,6 +91,9 @@ def scrape(args: argparse.Namespace) -> int:
             object_store=object_store,
             publisher=publisher,
         )
+        failed_feed_count += int(feed_failed)
+        fatal_feed_count += int(feed_fatal)
+        successful_feed_count += int(not feed_failed)
         if index < feed_count - 1:
             time.sleep(source["crawl"]["delay_seconds"])
     log_event(
@@ -95,10 +101,14 @@ def scrape(args: argparse.Namespace) -> int:
         "rss_source_completed",
         source_id=source["source_id"],
         feed_count=feed_count,
+        successful_feed_count=successful_feed_count,
         failed_feed_count=failed_feed_count,
+        fatal_feed_count=fatal_feed_count,
         dry_run=args.dry_run,
     )
-    return 1 if failed_feed_count else 0
+    if fatal_feed_count:
+        return 1
+    return 1 if failed_feed_count and successful_feed_count == 0 else 0
 
 
 def scrape_feed(
@@ -110,7 +120,7 @@ def scrape_feed(
     retry: dict,
     object_store: S3PayloadStore | None,
     publisher: JsonEventPublisher | None,
-) -> int:
+) -> tuple[bool, bool]:
     started_at = time.perf_counter()
     try:
         _scrape_feed(
@@ -124,7 +134,7 @@ def scrape_feed(
             started_at=started_at,
         )
     except Exception as error:
-        return handle_unconsumed_error(
+        handle_unconsumed_error(
             service_name=SERVICE_NAME,
             failure_event="rss_feed_failed",
             error=error,
@@ -133,7 +143,9 @@ def scrape_feed(
             feed_id=feed["feed_id"],
             dry_run=args.dry_run,
         )
-    return 0
+        fatal = not isinstance(error, IngestionError) or error.retryable
+        return True, fatal
+    return False, False
 
 
 def _scrape_feed(
