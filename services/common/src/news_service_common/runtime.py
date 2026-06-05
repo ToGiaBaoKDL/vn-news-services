@@ -49,6 +49,14 @@ def handle_consumed_error(
     fields = error_fields(error)
     if not isinstance(error, IngestionError):
         fields["stack_trace"] = traceback.format_exc()
+    if consumed:
+        fields.update(
+            {
+                "topic": consumed.topic,
+                "partition": consumed.partition,
+                "offset": consumed.offset,
+            }
+        )
     if consumed and isinstance(error, IngestionError) and not error.retryable:
         event = make_dlq_event(
             source_topic=consumed.topic,
@@ -71,6 +79,15 @@ def handle_consumed_error(
             level="error",
             duration_ms=elapsed_ms(started_at),
             dlq_topic=get_topic_name(config, "dlq"),
+            **fields,
+        )
+        return 0
+    if consumed and isinstance(error, IngestionError) and error.retryable:
+        log_event(
+            service_name,
+            failure_event,
+            level="error",
+            duration_ms=elapsed_ms(started_at),
             **fields,
         )
         return 0

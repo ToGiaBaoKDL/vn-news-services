@@ -94,7 +94,7 @@ def test_permanent_consumed_error_routes_invalid_payload_to_dlq() -> None:
     assert event.payload["failed_event"]["encoding"] == "base64"
 
 
-def test_retryable_consumed_error_does_not_commit_offset() -> None:
+def test_retryable_consumed_error_keeps_worker_alive_without_commit() -> None:
     consumed = ConsumedEvent(message=FakeMessage(b"not-json"))
     publisher = FakePublisher()
     consumer = FakeConsumer()
@@ -108,6 +108,29 @@ def test_retryable_consumed_error_does_not_commit_offset() -> None:
         consumer=consumer,
         consumed=consumed,
         error=IngestionError(stage="payload_write", retryable=True, message="S3 unavailable"),
+        started_at=time.perf_counter(),
+    )
+
+    assert result == 0
+    assert consumer.committed == []
+    assert publisher.events == []
+    assert publisher.flushed is False
+
+
+def test_unexpected_consumed_error_stops_worker_without_commit() -> None:
+    consumed = ConsumedEvent(message=FakeMessage(b"not-json"))
+    publisher = FakePublisher()
+    consumer = FakeConsumer()
+
+    result = handle_consumed_error(
+        service_name="article_fetcher",
+        failure_event="article_fetch_failed",
+        dlq_event="article_fetch_dlq",
+        config={"event_bus": {"topics": {"dlq": {"name": "news.dlq.v1"}}}},
+        publisher=publisher,
+        consumer=consumer,
+        consumed=consumed,
+        error=RuntimeError("unexpected bug"),
         started_at=time.perf_counter(),
     )
 
