@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from confluent_kafka import Consumer, KafkaError, KafkaException, Message, Producer
+from confluent_kafka import Consumer, KafkaError, KafkaException, Message, Producer, TopicPartition
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.json_schema import JSONSerializer
 from confluent_kafka.serialization import MessageField, SerializationContext
@@ -133,6 +133,9 @@ class JsonEventConsumer:
 
     def commit(self, event: ConsumedEvent) -> None:
         self.consumer.commit(event.message, asynchronous=False)
+
+    def seek(self, event: ConsumedEvent) -> None:
+        self.consumer.seek(TopicPartition(event.topic, event.partition, event.offset))
 
     def close(self) -> None:
         self.consumer.close()

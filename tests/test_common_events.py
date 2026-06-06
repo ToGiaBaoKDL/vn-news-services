@@ -14,7 +14,7 @@ from news_service_common.events import (
     event_message_key,
     make_dlq_event,
 )
-from news_service_common.runtime import handle_consumed_error
+from news_service_common.runtime import handle_consumed_error, should_stop_after_process
 
 
 def test_decode_schema_registry_json_payload() -> None:
@@ -88,6 +88,7 @@ def test_permanent_consumed_error_routes_invalid_payload_to_dlq() -> None:
 
     assert result == 0
     assert consumer.committed == [consumed]
+    assert consumer.seeked == []
     assert publisher.flushed is True
     topic_key, event = publisher.events[0]
     assert topic_key == "dlq"
@@ -111,8 +112,9 @@ def test_retryable_consumed_error_keeps_worker_alive_without_commit() -> None:
         started_at=time.perf_counter(),
     )
 
-    assert result == 0
+    assert result == 2
     assert consumer.committed == []
+    assert consumer.seeked == [consumed]
     assert publisher.events == []
     assert publisher.flushed is False
 
@@ -136,8 +138,14 @@ def test_unexpected_consumed_error_stops_worker_without_commit() -> None:
 
     assert result == 1
     assert consumer.committed == []
+    assert consumer.seeked == []
     assert publisher.events == []
     assert publisher.flushed is False
+
+
+def test_retryable_consumed_result_keeps_daemon_running_but_fails_once() -> None:
+    assert should_stop_after_process(2, once=False) is None
+    assert should_stop_after_process(2, once=True) == 1
 
 
 def test_make_dlq_event_is_stable_for_same_source_message() -> None:
@@ -194,6 +202,10 @@ class FakePublisher:
 class FakeConsumer:
     def __init__(self) -> None:
         self.committed: list[ConsumedEvent] = []
+        self.seeked: list[ConsumedEvent] = []
 
     def commit(self, event: ConsumedEvent) -> None:
         self.committed.append(event)
+
+    def seek(self, event: ConsumedEvent) -> None:
+        self.seeked.append(event)

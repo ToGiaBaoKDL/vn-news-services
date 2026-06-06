@@ -20,6 +20,7 @@ from news_service_common.runtime import (
     elapsed_ms,
     handle_consumed_error,
     handle_unconsumed_error,
+    should_stop_after_process,
 )
 from news_service_common.stages import run_stage
 from news_service_common.storage import S3PayloadStore
@@ -68,8 +69,9 @@ def run() -> int:
     try:
         while not shutdown.requested:
             result = process_one(args, config, sources, publisher, consumer, object_store)
-            if args.once or result:
-                return result
+            exit_code = should_stop_after_process(result, once=args.once)
+            if exit_code is not None:
+                return exit_code
         log_event(SERVICE_NAME, "article_extract_stopped", duration_ms=elapsed_ms(started_at))
         return 0
     finally:

@@ -17,6 +17,8 @@ from news_service_common.events import (
 )
 from news_service_common.telemetry import log_event
 
+RETRYABLE_CONSUMED_ERROR = 2
+
 
 @dataclass
 class ShutdownSignal:
@@ -83,6 +85,7 @@ def handle_consumed_error(
         )
         return 0
     if consumed and isinstance(error, IngestionError) and error.retryable:
+        consumer.seek(consumed)
         log_event(
             service_name,
             failure_event,
@@ -90,7 +93,7 @@ def handle_consumed_error(
             duration_ms=elapsed_ms(started_at),
             **fields,
         )
-        return 0
+        return RETRYABLE_CONSUMED_ERROR
     log_event(
         service_name,
         failure_event,
@@ -99,6 +102,14 @@ def handle_consumed_error(
         **fields,
     )
     return 1
+
+
+def should_stop_after_process(result: int, *, once: bool) -> int | None:
+    if once and result == RETRYABLE_CONSUMED_ERROR:
+        return 1
+    if once or (result and result != RETRYABLE_CONSUMED_ERROR):
+        return result
+    return None
 
 
 def handle_unconsumed_error(
