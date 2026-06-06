@@ -272,7 +272,6 @@ def fetch_requested_event() -> ArticleFetchRequested:
 def layout() -> StorageLayout:
     return StorageLayout(
         buckets={"landing": "tgb-prod-landing-a7k3p9"},
-        warehouse_prefix="warehouse",
         payload_prefix="payloads",
     )
 

@@ -304,7 +304,6 @@ def make_ingestor(
 ) -> FeedIngestor:
     layout = StorageLayout(
         buckets={"landing": "tgb-prod-landing-a7k3p9"},
-        warehouse_prefix="warehouse",
         payload_prefix="payloads",
     )
     return FeedIngestor(
