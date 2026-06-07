@@ -17,7 +17,7 @@ from news_service_common.events import (
     JsonEventPublisher,
     make_dlq_event,
 )
-from news_service_common.telemetry import log_event
+from news_service_common.telemetry import log_event, log_metric
 
 RETRYABLE_CONSUMED_ERROR = 2
 
@@ -157,6 +157,16 @@ def handle_consumed_error(
             duration_ms=elapsed_ms(started_at),
             dlq_topic=get_topic_name(config, "dlq"),
             **fields,
+        )
+        log_metric(
+            service_name,
+            "dlq_events_total",
+            1,
+            level="error",
+            dlq_topic=get_topic_name(config, "dlq"),
+            source_topic=consumed.topic,
+            source_partition=consumed.partition,
+            source_offset=consumed.offset,
         )
         return 0
     if consumed and isinstance(error, IngestionError) and error.retryable:

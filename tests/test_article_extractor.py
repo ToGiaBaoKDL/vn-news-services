@@ -73,6 +73,44 @@ def test_extract_article_uses_og_url_as_canonical_fallback() -> None:
     assert article.canonical_url == "https://vnexpress.net/og-a.html"
 
 
+@pytest.mark.parametrize(
+    ("source_id", "domain", "title_meta", "canonical_tag"),
+    [
+        ("baochinhphu", "baochinhphu.vn", "og:title", "link"),
+        ("cafef", "cafef.vn", "twitter:title", "og:url"),
+        ("dantri", "dantri.com.vn", "og:title", "link"),
+        ("genk", "genk.vn", "twitter:title", "link"),
+        ("kenh14", "kenh14.vn", "og:title", "og:url"),
+        ("thanhnien", "thanhnien.vn", "twitter:title", "link"),
+        ("tienphong", "tienphong.vn", "og:title", "link"),
+        ("tuoitre", "tuoitre.vn", "og:title", "og:url"),
+        ("vneconomy", "vneconomy.vn", "twitter:title", "link"),
+        ("vnexpress", "vnexpress.net", "og:title", "link"),
+    ],
+)
+def test_extract_article_source_fixtures_require_canonical_url(
+    source_id: str,
+    domain: str,
+    title_meta: str,
+    canonical_tag: str,
+) -> None:
+    canonical_url = f"https://{domain}/fixture-{source_id}.html"
+    article = extract_article(
+        source_fixture_html(
+            source_id=source_id,
+            domain=domain,
+            title_meta=title_meta,
+            canonical_tag=canonical_tag,
+        ),
+        fallback_url=f"https://{domain}/fallback.html",
+        require_canonical_url=True,
+    )
+
+    assert article.canonical_url == canonical_url
+    assert article.title == f"Tieu de {source_id}"
+    assert f"noi dung {source_id}" in article.body_text
+
+
 def test_article_extractor_publishes_extracted_event() -> None:
     publisher = FakePublisher()
     extractor = ArticleExtractor(
@@ -198,3 +236,37 @@ def fetched_event(payload: bytes = HTML) -> ArticleFetched:
         content_hash=hashlib.sha256(payload).hexdigest(),
         fetch_status="success",
     )
+
+
+def source_fixture_html(
+    *,
+    source_id: str,
+    domain: str,
+    title_meta: str,
+    canonical_tag: str,
+) -> bytes:
+    canonical_url = f"https://{domain}/fixture-{source_id}.html"
+    title_tag = (
+        f'<meta property="{title_meta}" content="Tieu de {source_id}">'
+        if title_meta.startswith("og:")
+        else f'<meta name="{title_meta}" content="Tieu de {source_id}">'
+    )
+    canonical = (
+        f'<link rel="canonical" href="{canonical_url}">'
+        if canonical_tag == "link"
+        else f'<meta property="og:url" content="{canonical_url}">'
+    )
+    return f"""<!doctype html>
+<html>
+  <head>
+    {canonical}
+    {title_tag}
+    <meta name="description" content="Tom tat {source_id}">
+    <meta name="author" content="Tac gia {source_id}">
+  </head>
+  <body>
+    <p>Day la doan noi dung {source_id} dau tien du dai de trich xuat.</p>
+    <p>Day la doan noi dung {source_id} thu hai de kiem tra ghep van ban.</p>
+  </body>
+</html>
+""".encode()

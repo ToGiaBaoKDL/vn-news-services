@@ -24,6 +24,7 @@ class ArticleHttpClient:
         client_factory: Callable[[], httpx.Client] | None = None,
         on_retry: Callable[..., None] | None = None,
         url_policy: UrlSafetyPolicy | None = None,
+        blocked_status_codes: list[int] | set[int] | tuple[int, ...] = (),
     ) -> None:
         self.user_agent = user_agent
         self.timeout_seconds = timeout_seconds
@@ -36,6 +37,7 @@ class ArticleHttpClient:
         )
         self.on_retry = on_retry
         self.url_policy = url_policy
+        self.blocked_status_codes = set(blocked_status_codes)
 
     def fetch(self, url: str) -> ArticleHttpResponse:
         if self.url_policy:
@@ -50,6 +52,14 @@ class ArticleHttpClient:
                     return self._fetch_once(client, url, headers)
                 except httpx.HTTPStatusError as error:
                     status_code = error.response.status_code
+                    if status_code in self.blocked_status_codes:
+                        raise HttpFetchError(
+                            f"Article fetch blocked by source HTTP policy: status {status_code}",
+                            stage="article_fetch",
+                            retryable=False,
+                            status_code=status_code,
+                            error_class="SourceHttpPolicyBlocked",
+                        ) from error
                     retryable = is_retryable_http_status(status_code)
                     if not retryable or attempt == self.retry_attempts:
                         raise HttpFetchError(

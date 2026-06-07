@@ -16,14 +16,14 @@ COPY services/article_fetcher/pyproject.toml services/article_fetcher/pyproject.
 COPY services/article_extractor/pyproject.toml services/article_extractor/pyproject.toml
 COPY services/dlq_operator/pyproject.toml services/dlq_operator/pyproject.toml
 
-RUN --mount=type=cache,id=uv-feed-ingestor,sharing=locked,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --package news-feed-ingestor --no-install-workspace
+RUN --mount=type=cache,id=uv-dlq-operator,sharing=locked,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package news-dlq-operator --no-install-workspace
 
 COPY services/common services/common
-COPY services/feed_ingestor services/feed_ingestor
+COPY services/dlq_operator services/dlq_operator
 
-RUN --mount=type=cache,id=uv-feed-ingestor,sharing=locked,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --package news-feed-ingestor --no-editable
+RUN --mount=type=cache,id=uv-dlq-operator,sharing=locked,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package news-dlq-operator --no-editable
 
 FROM python:3.12.13-slim
 
@@ -41,4 +41,4 @@ COPY --from=builder /app/.venv /app/.venv
 
 USER app
 
-ENTRYPOINT ["python", "-m", "news_feed_ingestor.main"]
+ENTRYPOINT ["python", "-m", "news_dlq_operator.main"]

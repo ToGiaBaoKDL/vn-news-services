@@ -11,6 +11,26 @@ def log_event(service: str, event: str, *, level: str = "info", **fields: Any) -
     write_event(stream, service, event, level=level, **fields)
 
 
+def log_metric(
+    service: str,
+    metric_name: str,
+    metric_value: int | float,
+    *,
+    metric_unit: str = "count",
+    level: str = "info",
+    **fields: Any,
+) -> None:
+    log_event(
+        service,
+        "metric_observed",
+        level=level,
+        metric_name=metric_name,
+        metric_value=metric_value,
+        metric_unit=metric_unit,
+        **fields,
+    )
+
+
 def write_event(
     stream: TextIO,
     service: str,

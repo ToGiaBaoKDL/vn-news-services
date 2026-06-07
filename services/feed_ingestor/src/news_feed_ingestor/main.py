@@ -16,7 +16,7 @@ from news_service_common.events import JsonEventPublisher
 from news_service_common.runtime import elapsed_ms, handle_unconsumed_error
 from news_service_common.stages import run_stage
 from news_service_common.storage import S3PayloadStore
-from news_service_common.telemetry import log_event
+from news_service_common.telemetry import log_event, log_metric
 from news_service_common.url_safety import UrlSafetyPolicy
 
 SERVICE_NAME = "feed_ingestor"
@@ -102,6 +102,16 @@ def scrape(args: argparse.Namespace) -> int:
         "rss_source_completed",
         source_id=source["source_id"],
         feed_count=feed_count,
+        successful_feed_count=successful_feed_count,
+        failed_feed_count=failed_feed_count,
+        fatal_feed_count=fatal_feed_count,
+        dry_run=args.dry_run,
+    )
+    log_metric(
+        SERVICE_NAME,
+        "rss_source_feeds_total",
+        feed_count,
+        source_id=source["source_id"],
         successful_feed_count=successful_feed_count,
         failed_feed_count=failed_feed_count,
         fatal_feed_count=fatal_feed_count,

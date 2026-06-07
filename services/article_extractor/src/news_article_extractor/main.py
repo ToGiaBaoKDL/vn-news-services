@@ -25,7 +25,7 @@ from news_service_common.runtime import (
 )
 from news_service_common.stages import run_stage
 from news_service_common.storage import S3PayloadStore
-from news_service_common.telemetry import log_event
+from news_service_common.telemetry import log_event, log_metric
 
 SERVICE_NAME = "article_extractor"
 
@@ -137,6 +137,14 @@ def process_one(
             partition=consumed.partition,
             offset=consumed.offset,
             **asdict(outcome),
+        )
+        log_metric(
+            SERVICE_NAME,
+            "article_extract_events_total",
+            1,
+            source_id=outcome.source_id,
+            article_id=outcome.article_id,
+            status=outcome.status,
         )
         return 0
     except Exception as error:

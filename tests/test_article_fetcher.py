@@ -246,6 +246,19 @@ def test_article_http_client_rejects_permanent_status() -> None:
     assert raised.value.status_code == 404
 
 
+def test_article_http_client_marks_source_blocked_status_as_permanent() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(428, request=request)
+
+    with pytest.raises(HttpFetchError) as raised:
+        make_client(handler, blocked_status_codes=[428]).fetch("https://dantri.com.vn/a.html")
+
+    assert raised.value.stage == "article_fetch"
+    assert raised.value.retryable is False
+    assert raised.value.status_code == 428
+    assert raised.value.error_class == "SourceHttpPolicyBlocked"
+
+
 def test_article_http_client_rejects_oversized_response() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"x" * 11, request=request)
@@ -313,6 +326,7 @@ def make_client(
     on_retry=None,
     max_article_bytes: int = 1024,
     url_policy: UrlSafetyPolicy | None = None,
+    blocked_status_codes: list[int] | None = None,
 ) -> ArticleHttpClient:
     transport = httpx.MockTransport(handler)
     return ArticleHttpClient(
@@ -325,4 +339,5 @@ def make_client(
         client_factory=lambda: httpx.Client(transport=transport),
         on_retry=on_retry,
         url_policy=url_policy,
+        blocked_status_codes=blocked_status_codes or [],
     )

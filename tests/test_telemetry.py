@@ -4,7 +4,7 @@ import json
 from io import StringIO
 
 from news_service_common.errors import FeedFetchError, error_fields
-from news_service_common.telemetry import write_event
+from news_service_common.telemetry import log_metric, write_event
 
 
 def test_write_event_uses_consistent_json_envelope() -> None:
@@ -18,6 +18,18 @@ def test_write_event_uses_consistent_json_envelope() -> None:
     assert record["service"] == "feed_ingestor"
     assert record["source_id"] == "vnexpress"
     assert record["timestamp"].endswith("+00:00")
+
+
+def test_log_metric_uses_consistent_json_envelope(capsys) -> None:
+    log_metric("article_fetcher", "article_fetch_events_total", 1, source_id="vnexpress")
+
+    record = json.loads(capsys.readouterr().out)
+    assert record["event"] == "metric_observed"
+    assert record["metric_name"] == "article_fetch_events_total"
+    assert record["metric_unit"] == "count"
+    assert record["metric_value"] == 1
+    assert record["service"] == "article_fetcher"
+    assert record["source_id"] == "vnexpress"
 
 
 def test_error_fields_include_recovery_metadata() -> None:

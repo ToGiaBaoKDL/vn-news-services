@@ -6,6 +6,7 @@ requires-python = "==3.12.*"
 members = [
     "news-article-extractor",
     "news-article-fetcher",
+    "news-dlq-operator",
     "news-feed-ingestor",
     "news-service-common",
     "vn-news-services",
@@ -344,6 +345,21 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "news-platform-lib", editable = "../vn-news-platform-lib" },
+    { name = "news-service-common", editable = "services/common" },
+]
+
+[[package]]
+name = "news-dlq-operator"
+version = "0.1.0"
+source = { editable = "services/dlq_operator" }
+dependencies = [
+    { name = "news-platform-lib" },
+    { name = "news-service-common" },
+]
+
+[package.metadata]
+requires-dist = [
     { name = "news-platform-lib", editable = "../vn-news-platform-lib" },
     { name = "news-service-common", editable = "services/common" },
 ]
