@@ -18,6 +18,7 @@ from news_service_common.events import (
     JsonEventPublisher,
 )
 from news_service_common.runtime import (
+    ConsumedRetryBackoff,
     ShutdownSignal,
     elapsed_ms,
     handle_consumed_error,
@@ -27,6 +28,7 @@ from news_service_common.runtime import (
 from news_service_common.stages import run_stage
 from news_service_common.storage import S3PayloadStore
 from news_service_common.telemetry import log_event
+from news_service_common.url_safety import UrlSafetyPolicy
 
 SERVICE_NAME = "article_fetcher"
 
@@ -60,6 +62,7 @@ def run() -> int:
                 endpoint_url=config["storage"]["endpoint_url"],
             ),
         )
+        retry_backoff = ConsumedRetryBackoff.from_config(config)
     except Exception as error:
         return handle_unconsumed_error(
             service_name=SERVICE_NAME,
@@ -70,7 +73,16 @@ def run() -> int:
         )
     try:
         while not shutdown.requested:
-            result = process_one(args, config, sources, publisher, consumer, object_store)
+            result = process_one(
+                args,
+                config,
+                sources,
+                publisher,
+                consumer,
+                object_store,
+                retry_backoff,
+                shutdown,
+            )
             exit_code = should_stop_after_process(result, once=args.once)
             if exit_code is not None:
                 return exit_code
@@ -87,6 +99,8 @@ def process_one(
     publisher: JsonEventPublisher,
     consumer: JsonEventConsumer,
     object_store: S3PayloadStore,
+    retry_backoff: ConsumedRetryBackoff,
+    shutdown: ShutdownSignal,
 ) -> int:
     started_at = time.perf_counter()
     consumed: ConsumedEvent | None = None
@@ -119,6 +133,7 @@ def process_one(
                 max_article_bytes=config["crawl"]["max_article_bytes"],
                 retry_attempts=retry["attempts"],
                 retry_backoff_seconds=retry["backoff_seconds"],
+                url_policy=UrlSafetyPolicy(source["domain"]),
                 on_retry=lambda **fields: log_event(
                     SERVICE_NAME,
                     "article_fetch_retry",
@@ -134,6 +149,7 @@ def process_one(
         )
         outcome = fetcher.fetch(event)
         run_stage("event_commit", True, lambda: consumer.commit(consumed))
+        retry_backoff.reset(consumed)
         log_event(
             SERVICE_NAME,
             "article_fetch_succeeded",
@@ -155,6 +171,8 @@ def process_one(
             consumed=consumed,
             error=error,
             started_at=started_at,
+            retry_backoff=retry_backoff,
+            shutdown=shutdown,
         )
 
 

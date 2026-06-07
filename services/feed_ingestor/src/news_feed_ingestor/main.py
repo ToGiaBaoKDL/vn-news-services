@@ -17,6 +17,7 @@ from news_service_common.runtime import elapsed_ms, handle_unconsumed_error
 from news_service_common.stages import run_stage
 from news_service_common.storage import S3PayloadStore
 from news_service_common.telemetry import log_event
+from news_service_common.url_safety import UrlSafetyPolicy
 
 SERVICE_NAME = "feed_ingestor"
 
@@ -165,6 +166,7 @@ def _scrape_feed(
         max_feed_bytes=config["crawl"]["max_feed_bytes"],
         retry_attempts=retry["attempts"],
         retry_backoff_seconds=retry["backoff_seconds"],
+        url_policy=UrlSafetyPolicy(source["domain"]),
         on_retry=lambda **fields: log_event(
             SERVICE_NAME,
             "rss_fetch_retry",
@@ -198,6 +200,7 @@ def _scrape_feed(
         object_store=object_store,
         publisher=publisher,
         storage_layout=StorageLayout.from_config(config),
+        url_policy=UrlSafetyPolicy(source["domain"]),
     ).scrape(source, feed)
     log_event(
         SERVICE_NAME, "rss_feed_scraped", duration_ms=elapsed_ms(started_at), **asdict(outcome)

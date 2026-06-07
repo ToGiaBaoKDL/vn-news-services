@@ -16,6 +16,7 @@ from news_service_common.events import (
     JsonEventPublisher,
 )
 from news_service_common.runtime import (
+    ConsumedRetryBackoff,
     ShutdownSignal,
     elapsed_ms,
     handle_consumed_error,
@@ -58,6 +59,7 @@ def run() -> int:
                 endpoint_url=config["storage"]["endpoint_url"],
             ),
         )
+        retry_backoff = ConsumedRetryBackoff.from_config(config)
     except Exception as error:
         return handle_unconsumed_error(
             service_name=SERVICE_NAME,
@@ -68,7 +70,16 @@ def run() -> int:
         )
     try:
         while not shutdown.requested:
-            result = process_one(args, config, sources, publisher, consumer, object_store)
+            result = process_one(
+                args,
+                config,
+                sources,
+                publisher,
+                consumer,
+                object_store,
+                retry_backoff,
+                shutdown,
+            )
             exit_code = should_stop_after_process(result, once=args.once)
             if exit_code is not None:
                 return exit_code
@@ -85,6 +96,8 @@ def process_one(
     publisher: JsonEventPublisher,
     consumer: JsonEventConsumer,
     object_store: S3PayloadStore,
+    retry_backoff: ConsumedRetryBackoff,
+    shutdown: ShutdownSignal,
 ) -> int:
     started_at = time.perf_counter()
     consumed: ConsumedEvent | None = None
@@ -115,6 +128,7 @@ def process_one(
         )
         outcome = extractor.extract(event)
         run_stage("event_commit", True, lambda: consumer.commit(consumed))
+        retry_backoff.reset(consumed)
         log_event(
             SERVICE_NAME,
             "article_extract_succeeded",
@@ -136,6 +150,8 @@ def process_one(
             consumed=consumed,
             error=error,
             started_at=started_at,
+            retry_backoff=retry_backoff,
+            shutdown=shutdown,
         )
 
 

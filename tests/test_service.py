@@ -8,6 +8,7 @@ from news_platform.storage import StorageLayout
 from news_feed_ingestor.models import FeedCheckpoint, FeedResponse
 from news_feed_ingestor.service import FeedIngestor
 from news_service_common.errors import IngestionError
+from news_service_common.url_safety import UrlSafetyPolicy
 
 RSS = b"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -35,6 +36,11 @@ RSS_WITH_NEW_ITEM = RSS.replace(
 
 RSS_WITH_CHANGED_ITEM = RSS.replace(
     b"<title>Gia vang tang</title>", b"<title>Gia vang tang manh</title>"
+)
+
+RSS_WITH_EXTERNAL_ITEM = RSS.replace(
+    b"https://vnexpress.net/a.html",
+    b"https://evil.example/a.html",
 )
 
 
@@ -297,10 +303,28 @@ def test_scrape_recovers_after_publish_flush_failure() -> None:
     assert next(iter(store.checkpoints.values())).events_published is True
 
 
+def test_scrape_rejects_external_article_item_before_publishing() -> None:
+    client = FakeFeedClient([FeedResponse(200, RSS_WITH_EXTERNAL_ITEM, None, None)])
+    store = FakeObjectStore()
+    publisher = FakePublisher()
+
+    with pytest.raises(IngestionError, match="outside allowed domain"):
+        make_ingestor(
+            client,
+            store,
+            publisher,
+            url_policy=UrlSafetyPolicy("vnexpress.net"),
+        ).scrape(source(), feed(), observed_at=datetime(2026, 6, 1, 2, tzinfo=UTC))
+
+    assert publisher.events == []
+
+
 def make_ingestor(
     client: FakeFeedClient,
     store: FakeObjectStore,
     publisher: FakePublisher,
+    *,
+    url_policy: UrlSafetyPolicy | None = None,
 ) -> FeedIngestor:
     layout = StorageLayout(
         buckets={"landing": "tgb-prod-landing-a7k3p9"},
@@ -311,6 +335,7 @@ def make_ingestor(
         object_store=store,
         publisher=publisher,
         storage_layout=layout,
+        url_policy=url_policy,
     )
 
 

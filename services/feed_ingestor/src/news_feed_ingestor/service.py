@@ -23,6 +23,7 @@ from news_feed_ingestor.models import (
 from news_feed_ingestor.rss import parse_rss_items
 from news_service_common.errors import IngestionError
 from news_service_common.stages import run_stage
+from news_service_common.url_safety import UrlSafetyPolicy
 
 MAX_CHECKPOINT_ITEMS = 1000
 
@@ -55,11 +56,13 @@ class FeedIngestor:
         object_store: ObjectStore,
         publisher: Publisher,
         storage_layout: StorageLayout,
+        url_policy: UrlSafetyPolicy | None = None,
     ) -> None:
         self.feed_client = feed_client
         self.object_store = object_store
         self.publisher = publisher
         self.storage_layout = storage_layout
+        self.url_policy = url_policy
 
     def scrape(
         self,
@@ -101,6 +104,7 @@ class FeedIngestor:
             )
 
         parsed_feed = run_stage("feed_parse", False, lambda: parse_rss_items(response.content))
+        self._validate_feed_items(parsed_feed.items)
         item_record_hashes = {
             feed_item_id(source_id, feed_id, item): item_record_hash(item)
             for item in parsed_feed.items
@@ -292,6 +296,17 @@ class FeedIngestor:
             request_revision=request_revision,
         )
         self.publisher.publish("article_fetch_requested", fetch_event)
+
+    def _validate_feed_items(self, items: list[FeedItem]) -> None:
+        if not self.url_policy:
+            return
+        for item in items:
+            self.url_policy.validate_url(
+                item.article_url,
+                stage="feed_item_validate",
+                resolve=False,
+                retryable_dns=False,
+            )
 
 
 def feed_item_id(source_id: str, feed_id: str, item: FeedItem) -> str:

@@ -8,6 +8,7 @@ import pytest
 from news_feed_ingestor.adapters import HttpFeedClient
 from news_feed_ingestor.models import FeedCheckpoint
 from news_service_common.errors import FeedFetchError
+from news_service_common.url_safety import UrlSafetyPolicy
 
 
 def test_http_feed_client_retries_transient_status() -> None:
@@ -101,12 +102,35 @@ def test_http_feed_client_rejects_oversized_response() -> None:
     assert raised.value.retryable is False
 
 
+def test_http_feed_client_rejects_external_redirect_before_following() -> None:
+    requested_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        return httpx.Response(
+            302,
+            headers={"location": "https://evil.example/rss.xml"},
+            request=request,
+        )
+
+    client = make_client(
+        handler,
+        url_policy=UrlSafetyPolicy("vnexpress.net", resolver=public_resolver),
+    )
+
+    with pytest.raises(Exception, match="outside allowed domain"):
+        client.fetch("https://vnexpress.net/rss/kinh-doanh.rss")
+
+    assert requested_urls == ["https://vnexpress.net/rss/kinh-doanh.rss"]
+
+
 def make_client(
     handler: httpx.MockTransport | httpx.BaseTransport | object,
     *,
     sleep=lambda seconds: None,
     on_retry=None,
     max_feed_bytes: int = 1024,
+    url_policy: UrlSafetyPolicy | None = None,
 ) -> HttpFeedClient:
     transport = (
         handler if isinstance(handler, httpx.BaseTransport) else httpx.MockTransport(handler)
@@ -120,4 +144,9 @@ def make_client(
         sleep=sleep,
         client_factory=lambda: httpx.Client(transport=transport),
         on_retry=on_retry,
+        url_policy=url_policy,
     )
+
+
+def public_resolver(host: str, port: int):
+    return [__import__("ipaddress").ip_address("8.8.8.8")]

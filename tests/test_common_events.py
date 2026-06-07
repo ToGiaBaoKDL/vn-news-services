@@ -14,7 +14,12 @@ from news_service_common.events import (
     event_message_key,
     make_dlq_event,
 )
-from news_service_common.runtime import handle_consumed_error, should_stop_after_process
+from news_service_common.runtime import (
+    ConsumedRetryBackoff,
+    ShutdownSignal,
+    handle_consumed_error,
+    should_stop_after_process,
+)
 
 
 def test_decode_schema_registry_json_payload() -> None:
@@ -117,6 +122,44 @@ def test_retryable_consumed_error_keeps_worker_alive_without_commit() -> None:
     assert consumer.seeked == [consumed]
     assert publisher.events == []
     assert publisher.flushed is False
+
+
+def test_retryable_consumed_error_waits_with_bounded_backoff() -> None:
+    consumed = ConsumedEvent(message=FakeMessage(b"not-json"))
+    publisher = FakePublisher()
+    consumer = FakeConsumer()
+    sleeps: list[float] = []
+    backoff = ConsumedRetryBackoff(
+        base_delay_seconds=2,
+        max_delay_seconds=5,
+        jitter_seconds=0,
+        sleep=sleeps.append,
+        poll_seconds=10,
+    )
+
+    for _ in range(3):
+        result = handle_consumed_error(
+            service_name="article_fetcher",
+            failure_event="article_fetch_failed",
+            dlq_event="article_fetch_dlq",
+            config={"event_bus": {"topics": {"dlq": {"name": "news.dlq.v1"}}}},
+            publisher=publisher,
+            consumer=consumer,
+            consumed=consumed,
+            error=IngestionError(
+                stage="payload_write",
+                retryable=True,
+                message="S3 unavailable",
+            ),
+            started_at=time.perf_counter(),
+            retry_backoff=backoff,
+            shutdown=ShutdownSignal(),
+        )
+        assert result == 2
+
+    assert consumer.committed == []
+    assert consumer.seeked == [consumed, consumed, consumed]
+    assert sleeps == [2, 4, 5]
 
 
 def test_unexpected_consumed_error_stops_worker_without_commit() -> None:

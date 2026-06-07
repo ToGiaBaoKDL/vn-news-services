@@ -11,6 +11,7 @@ from news_article_fetcher.http import ArticleHttpClient
 from news_article_fetcher.models import ArticleHttpResponse
 from news_article_fetcher.service import ArticleFetcher
 from news_service_common.errors import HttpFetchError, IngestionError
+from news_service_common.url_safety import UrlSafetyPolicy
 
 HTML = b"<html><head><title>Tin kinh doanh</title></head><body>OK</body></html>"
 
@@ -255,6 +256,35 @@ def test_article_http_client_rejects_oversized_response() -> None:
     assert raised.value.retryable is False
 
 
+def test_article_http_client_rejects_private_redirect_before_following() -> None:
+    requested_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        return httpx.Response(
+            302,
+            headers={"location": "https://private.vnexpress.net/a.html"},
+            request=request,
+        )
+
+    client = make_client(
+        handler,
+        url_policy=UrlSafetyPolicy(
+            "vnexpress.net",
+            resolver=lambda host, port: [
+                __import__("ipaddress").ip_address(
+                    "10.0.0.5" if host == "private.vnexpress.net" else "8.8.8.8"
+                )
+            ],
+        ),
+    )
+
+    with pytest.raises(IngestionError, match="non-public"):
+        client.fetch("https://vnexpress.net/a.html")
+
+    assert requested_urls == ["https://vnexpress.net/a.html"]
+
+
 def fetch_requested_event() -> ArticleFetchRequested:
     return ArticleFetchRequested(
         schema_version="article.fetch_requested.v3",
@@ -282,6 +312,7 @@ def make_client(
     sleep=lambda seconds: None,
     on_retry=None,
     max_article_bytes: int = 1024,
+    url_policy: UrlSafetyPolicy | None = None,
 ) -> ArticleHttpClient:
     transport = httpx.MockTransport(handler)
     return ArticleHttpClient(
@@ -293,4 +324,5 @@ def make_client(
         sleep=sleep,
         client_factory=lambda: httpx.Client(transport=transport),
         on_retry=on_retry,
+        url_policy=url_policy,
     )
