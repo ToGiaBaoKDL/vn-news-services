@@ -28,6 +28,28 @@ def test_decode_schema_registry_json_payload() -> None:
     assert decode_schema_registry_json(payload) == {"hello": "world"}
 
 
+def test_decode_schema_registry_json_accepts_expected_schema_id() -> None:
+    payload = b"\x00\x00\x00\x00\x02" + json.dumps({"hello": "world"}).encode()
+
+    assert decode_schema_registry_json(payload, expected_schema_ids=frozenset({2})) == {
+        "hello": "world"
+    }
+
+
+def test_decode_schema_registry_json_rejects_unexpected_schema_id() -> None:
+    payload = b"\x00\x00\x00\x00\x03" + json.dumps({"hello": "world"}).encode()
+
+    with pytest.raises(ValueError, match="Unexpected Schema Registry schema id 3"):
+        decode_schema_registry_json(payload, expected_schema_ids=frozenset({2}))
+
+
+def test_decode_schema_registry_json_rejects_zero_schema_id() -> None:
+    payload = b"\x00\x00\x00\x00\x00" + json.dumps({"hello": "world"}).encode()
+
+    with pytest.raises(ValueError, match="positive Schema Registry schema id"):
+        decode_schema_registry_json(payload)
+
+
 def test_decode_schema_registry_json_rejects_unframed_payload() -> None:
     with pytest.raises(ValueError, match="Schema Registry JSON framing"):
         decode_schema_registry_json(b'{"hello":"world"}')

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 from confluent_kafka import Consumer, KafkaError, KafkaException, Message, Producer, TopicPartition
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.json_schema import JSONSerializer
@@ -23,10 +25,14 @@ from news_platform.contracts.events import (
 )
 from news_platform.ids import make_stable_id
 
+from news_service_common.errors import IngestionError
+
 
 @dataclass(frozen=True)
 class ConsumedEvent:
     message: Message
+    expected_schema_ids: frozenset[int] | None = None
+    expected_schema_ids_loader: Callable[[], frozenset[int]] | None = None
 
     @property
     def topic(self) -> str:
@@ -41,17 +47,27 @@ class ConsumedEvent:
         return self.message.offset()
 
     def decode_value(self) -> dict[str, Any]:
-        return decode_schema_registry_json(self.message.value())
+        return decode_schema_registry_json(
+            self.message.value(),
+            expected_schema_ids=self.resolve_expected_schema_ids(),
+        )
 
     def payload_for_dlq(self) -> dict[str, Any]:
         payload = self.message.value()
         try:
-            return {"encoding": "json", "value": self.decode_value()}
+            return {"encoding": "json", "value": decode_schema_registry_json(payload)}
         except Exception:
             return {
                 "encoding": "base64",
                 "value": base64.b64encode(payload or b"").decode(),
             }
+
+    def resolve_expected_schema_ids(self) -> frozenset[int] | None:
+        if self.expected_schema_ids is not None:
+            return self.expected_schema_ids
+        if self.expected_schema_ids_loader is not None:
+            return self.expected_schema_ids_loader()
+        return None
 
 
 class JsonEventPublisher:
@@ -110,6 +126,8 @@ class JsonEventConsumer:
     def __init__(self, config: dict[str, Any], *, group_id: str) -> None:
         self.config = config
         self.subscribed_topic: str | None = None
+        self.schema_registry_url = config["event_bus"]["schema_registry_url"].rstrip("/")
+        self.schema_ids_by_subject: dict[str, frozenset[int]] = {}
         self.consumer = Consumer(
             {
                 "bootstrap.servers": config["event_bus"]["bootstrap_servers"],
@@ -129,7 +147,11 @@ class JsonEventConsumer:
             return None
         if message.error():
             raise KafkaException(message.error())
-        return ConsumedEvent(message=message)
+        subject = f"{topic}-value"
+        return ConsumedEvent(
+            message=message,
+            expected_schema_ids_loader=lambda: self.schema_ids_for_subject(subject),
+        )
 
     def commit(self, event: ConsumedEvent) -> None:
         self.consumer.commit(event.message, asynchronous=False)
@@ -140,12 +162,65 @@ class JsonEventConsumer:
     def close(self) -> None:
         self.consumer.close()
 
+    def schema_ids_for_subject(self, subject: str) -> frozenset[int]:
+        if subject not in self.schema_ids_by_subject:
+            self.schema_ids_by_subject[subject] = fetch_subject_schema_ids(
+                self.schema_registry_url,
+                subject,
+            )
+        return self.schema_ids_by_subject[subject]
 
-def decode_schema_registry_json(payload: bytes | None) -> dict[str, Any]:
+
+def fetch_subject_schema_ids(registry_url: str, subject: str) -> frozenset[int]:
+    try:
+        versions_response = httpx.get(
+            f"{registry_url}/subjects/{subject}/versions",
+            timeout=10,
+        )
+        versions_response.raise_for_status()
+        versions = versions_response.json()
+        if not isinstance(versions, list) or not versions:
+            raise ValueError(f"Schema subject has no versions: {subject}")
+
+        schema_ids = set()
+        for version in versions:
+            schema_response = httpx.get(
+                f"{registry_url}/subjects/{subject}/versions/{version}",
+                timeout=10,
+            )
+            schema_response.raise_for_status()
+            schema_id = schema_response.json().get("id")
+            if not isinstance(schema_id, int) or schema_id <= 0:
+                raise ValueError(f"Invalid schema id for {subject} version {version}")
+            schema_ids.add(schema_id)
+    except httpx.HTTPError as error:
+        raise IngestionError(
+            stage="schema_registry",
+            retryable=True,
+            message=f"Schema Registry is unavailable for subject {subject}: {error}",
+            error_class=type(error).__name__,
+        ) from error
+
+    return frozenset(schema_ids)
+
+
+def decode_schema_registry_json(
+    payload: bytes | None,
+    *,
+    expected_schema_ids: frozenset[int] | None = None,
+) -> dict[str, Any]:
     if payload is None:
         raise ValueError("Cannot decode empty Redpanda message payload")
     if len(payload) < 5 or payload[0] != 0:
         raise ValueError("Expected Schema Registry JSON framing")
+    schema_id = int.from_bytes(payload[1:5], byteorder="big")
+    if schema_id <= 0:
+        raise ValueError("Expected positive Schema Registry schema id")
+    if expected_schema_ids is not None and schema_id not in expected_schema_ids:
+        raise ValueError(
+            f"Unexpected Schema Registry schema id {schema_id}; "
+            f"expected one of {sorted(expected_schema_ids)}"
+        )
     data = payload[5:]
     value = json.loads(data.decode())
     if not isinstance(value, dict):
