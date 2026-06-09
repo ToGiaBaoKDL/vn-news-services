@@ -298,6 +298,31 @@ def test_article_http_client_rejects_private_redirect_before_following() -> None
     assert requested_urls == ["https://vnexpress.net/a.html"]
 
 
+def test_article_http_client_retries_redirect_without_location() -> None:
+    request_count = 0
+    retry_logs: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        status_code = 302 if request_count < 3 else 200
+        return httpx.Response(status_code, content=b"<html>ok</html>", request=request)
+
+    response = make_client(
+        handler,
+        on_retry=lambda **fields: retry_logs.append(fields),
+        url_policy=UrlSafetyPolicy("vnexpress.net", resolver=public_resolver),
+    ).fetch("https://vnexpress.net/a.html")
+
+    assert response.status_code == 200
+    assert request_count == 3
+    assert [entry["error_class"] for entry in retry_logs] == [
+        "MalformedRedirect",
+        "MalformedRedirect",
+    ]
+    assert all(entry["status_code"] == 302 for entry in retry_logs)
+
+
 def fetch_requested_event() -> ArticleFetchRequested:
     return ArticleFetchRequested(
         schema_version="article.fetch_requested.v3",
@@ -317,6 +342,10 @@ def layout() -> StorageLayout:
         buckets={"landing": "tgb-prod-landing-a7k3p9"},
         payload_prefix="payloads",
     )
+
+
+def public_resolver(host: str, port: int):
+    return [__import__("ipaddress").ip_address("8.8.8.8")]
 
 
 def make_client(

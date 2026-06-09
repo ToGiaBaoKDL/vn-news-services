@@ -73,6 +73,10 @@ class HttpFeedClient:
                             error_class=type(error).__name__,
                         ) from error
                     self._sleep_before_retry(attempt, error)
+                except FeedFetchError as error:
+                    if not error.retryable or attempt == self.retry_attempts:
+                        raise
+                    self._sleep_before_retry(attempt, error, status_code=error.status_code)
         raise RuntimeError("RSS fetch loop exited unexpectedly")
 
     def _fetch_once(
@@ -85,29 +89,6 @@ class HttpFeedClient:
         current_url = url
         for redirect_count in range(self._max_redirects() + 1):
             with client.stream("GET", current_url, headers=headers) as response:
-                if response.is_redirect:
-                    if redirect_count == self._max_redirects():
-                        raise FeedFetchError(
-                            "RSS redirect limit exceeded",
-                            retryable=False,
-                            status_code=response.status_code,
-                        )
-                    if not self.url_policy:
-                        next_url = str(response.next_request.url) if response.next_request else ""
-                    else:
-                        next_url = self.url_policy.redirect_target(
-                            str(response.url),
-                            response.headers.get("location", ""),
-                            stage="feed_fetch",
-                        )
-                    if not next_url:
-                        raise FeedFetchError(
-                            "RSS redirect response is missing Location header",
-                            retryable=False,
-                            status_code=response.status_code,
-                        )
-                    current_url = next_url
-                    continue
                 if response.status_code == 304:
                     if not checkpoint or not checkpoint.events_published:
                         raise FeedFetchError(
@@ -116,6 +97,31 @@ class HttpFeedClient:
                             status_code=304,
                         )
                     return FeedResponse(304, b"", checkpoint.etag, checkpoint.last_modified)
+                if response.is_redirect:
+                    if redirect_count == self._max_redirects():
+                        raise FeedFetchError(
+                            "RSS redirect limit exceeded",
+                            retryable=False,
+                            status_code=response.status_code,
+                        )
+                    location = response.headers.get("location", "")
+                    if not location:
+                        raise FeedFetchError(
+                            "RSS redirect response is missing Location header",
+                            retryable=True,
+                            status_code=response.status_code,
+                            error_class="MalformedRedirect",
+                        )
+                    if not self.url_policy:
+                        next_url = str(response.next_request.url) if response.next_request else ""
+                    else:
+                        next_url = self.url_policy.redirect_target(
+                            str(response.url),
+                            location,
+                            stage="feed_fetch",
+                        )
+                    current_url = next_url
+                    continue
                 if is_retryable_http_status(response.status_code):
                     response.raise_for_status()
                 response.raise_for_status()
@@ -152,7 +158,7 @@ class HttpFeedClient:
                 attempt=attempt,
                 max_attempts=self.retry_attempts,
                 delay_seconds=delay_seconds,
-                error_class=type(error).__name__,
+                error_class=getattr(error, "error_class", type(error).__name__),
                 error_message=str(error),
                 status_code=status_code,
             )

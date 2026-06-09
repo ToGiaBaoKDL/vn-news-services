@@ -124,6 +124,31 @@ def test_http_feed_client_rejects_external_redirect_before_following() -> None:
     assert requested_urls == ["https://vnexpress.net/rss/kinh-doanh.rss"]
 
 
+def test_http_feed_client_retries_redirect_without_location() -> None:
+    request_count = 0
+    retry_logs: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        status_code = 302 if request_count < 3 else 200
+        return httpx.Response(status_code, content=b"<rss />", request=request)
+
+    response = make_client(
+        handler,
+        on_retry=lambda **fields: retry_logs.append(fields),
+        url_policy=UrlSafetyPolicy("vnexpress.net", resolver=public_resolver),
+    ).fetch("https://vnexpress.net/rss/kinh-doanh.rss")
+
+    assert response.status_code == 200
+    assert request_count == 3
+    assert [entry["error_class"] for entry in retry_logs] == [
+        "MalformedRedirect",
+        "MalformedRedirect",
+    ]
+    assert all(entry["status_code"] == 302 for entry in retry_logs)
+
+
 def make_client(
     handler: httpx.MockTransport | httpx.BaseTransport | object,
     *,

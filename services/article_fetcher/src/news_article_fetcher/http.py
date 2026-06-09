@@ -79,6 +79,10 @@ class ArticleHttpClient:
                             error_class=type(error).__name__,
                         ) from error
                     self._sleep_before_retry(attempt, error)
+                except HttpFetchError as error:
+                    if not error.retryable or attempt == self.retry_attempts:
+                        raise
+                    self._sleep_before_retry(attempt, error, status_code=error.status_code)
         raise RuntimeError("Article fetch loop exited unexpectedly")
 
     def _fetch_once(
@@ -98,20 +102,22 @@ class ArticleHttpClient:
                             retryable=False,
                             status_code=response.status_code,
                         )
+                    location = response.headers.get("location", "")
+                    if not location:
+                        raise HttpFetchError(
+                            "Article redirect response is missing Location header",
+                            stage="article_fetch",
+                            retryable=True,
+                            status_code=response.status_code,
+                            error_class="MalformedRedirect",
+                        )
                     if not self.url_policy:
                         next_url = str(response.next_request.url) if response.next_request else ""
                     else:
                         next_url = self.url_policy.redirect_target(
                             str(response.url),
-                            response.headers.get("location", ""),
+                            location,
                             stage="article_fetch",
-                        )
-                    if not next_url:
-                        raise HttpFetchError(
-                            "Article redirect response is missing Location header",
-                            stage="article_fetch",
-                            retryable=False,
-                            status_code=response.status_code,
                         )
                     current_url = next_url
                     continue
@@ -159,7 +165,7 @@ class ArticleHttpClient:
                 attempt=attempt,
                 max_attempts=self.retry_attempts,
                 delay_seconds=delay_seconds,
-                error_class=type(error).__name__,
+                error_class=getattr(error, "error_class", type(error).__name__),
                 error_message=str(error),
                 status_code=status_code,
             )
