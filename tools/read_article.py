@@ -8,7 +8,6 @@ import subprocess
 import sys
 from collections.abc import Iterable
 from typing import Any
-from urllib.parse import urlsplit
 
 from news_platform.config import get_topic_name, load_settings
 from news_platform.ids import make_stable_id, normalize_article_url
@@ -33,23 +32,19 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("VN_NEWS_DATA_SSH_HOST", "tgb-data-1"),
     )
     parser.add_argument(
-        "--control-host",
-        default=os.environ.get("VN_NEWS_CONTROL_SSH_HOST", "tgb-control-1"),
+        "--storage-host",
+        default=os.environ.get("VN_NEWS_STORAGE_SSH_HOST", "tgb-processing-1"),
+    )
+    parser.add_argument(
+        "--storage-container",
+        default=os.environ.get(
+            "VN_NEWS_STORAGE_CONTAINER",
+            "vn-news-processing-article-fetcher-1",
+        ),
     )
     parser.add_argument(
         "--redpanda-container",
         default=os.environ.get("VN_NEWS_REDPANDA_CONTAINER", "vn-news-data-redpanda-1"),
-    )
-    parser.add_argument(
-        "--control-env-file",
-        default=os.environ.get("VN_NEWS_CONTROL_ENV_FILE", "/etc/vn-news/env/control.env"),
-    )
-    parser.add_argument(
-        "--control-python",
-        default=os.environ.get(
-            "VN_NEWS_CONTROL_PYTHON",
-            "/home/ubuntu/vn-news-intelligence/repos/vn-news-cicd/.venv/bin/python",
-        ),
     )
     return parser.parse_args()
 
@@ -149,35 +144,28 @@ def record_summary(record: dict[str, Any]) -> dict[str, Any]:
 def fetched_html(
     *,
     payload_uri: str,
-    control_host: str,
-    control_env_file: str,
-    control_python: str,
+    storage_host: str,
+    storage_container: str,
 ) -> str:
-    parsed = urlsplit(payload_uri)
-    if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.lstrip("/"):
-        raise ValueError(f"Expected S3 payload URI, got: {payload_uri}")
-
     python_code = (
-        "import boto3,os,sys;"
-        "client=boto3.client('s3',endpoint_url=os.environ['VN_NEWS_STORAGE_ENDPOINT_URL']);"
-        "sys.stdout.buffer.write(client.get_object(Bucket=sys.argv[1],Key=sys.argv[2])['Body'].read())"
+        "import os,sys;"
+        "from news_service_common.storage import S3PayloadStore;"
+        "store=S3PayloadStore(endpoint_url=os.environ['VN_NEWS_STORAGE_ENDPOINT_URL']);"
+        "sys.stdout.buffer.write(store.read_compressed(sys.argv[1]))"
     )
-    fetch_command = shlex.join(
+    remote_command = shlex.join(
         [
-            control_python,
+            "docker",
+            "exec",
+            storage_container,
+            "/app/.venv/bin/python",
             "-c",
             python_code,
-            parsed.netloc,
-            parsed.path.lstrip("/"),
+            payload_uri,
         ]
     )
-    remote_script = (
-        f"set -a; source {shlex.quote(control_env_file)}; set +a; "
-        "export AWS_SHARED_CREDENTIALS_FILE=/run/vn-news/secrets/storage-admin-s3-credentials; "
-        f"{fetch_command} | zstd -d -q -c"
-    )
     result = subprocess.run(
-        ["ssh", control_host, shlex.join(["sudo", "bash", "-lc", remote_script])],
+        ["ssh", storage_host, remote_command],
         check=True,
         capture_output=True,
     )
@@ -190,9 +178,8 @@ def content_for_record(record: dict[str, Any], args: argparse.Namespace) -> str:
         return event["body_text"]
     return fetched_html(
         payload_uri=event["payload_uri"],
-        control_host=args.control_host,
-        control_env_file=args.control_env_file,
-        control_python=args.control_python,
+        storage_host=args.storage_host,
+        storage_container=args.storage_container,
     )
 
 
