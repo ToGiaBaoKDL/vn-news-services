@@ -49,6 +49,7 @@ def run() -> int:
 
 
 def scrape(args: argparse.Namespace) -> int:
+    started_at = time.perf_counter()
     config = run_stage("config_load", False, load_settings)
     sources = run_stage("config_load", False, lambda: load_sources(settings=config))
     source = run_stage(
@@ -71,6 +72,18 @@ def scrape(args: argparse.Namespace) -> int:
             ),
         )
         publisher = run_stage("event_bus_connect", True, lambda: JsonEventPublisher(config))
+    if not args.all_feeds:
+        return scrape_feed_task(
+            args=args,
+            config=config,
+            source=source,
+            feed=feeds[0],
+            retry=retry,
+            object_store=object_store,
+            publisher=publisher,
+            started_at=started_at,
+        )
+
     feed_count = len(feeds)
     log_event(
         SERVICE_NAME,
@@ -120,6 +133,62 @@ def scrape(args: argparse.Namespace) -> int:
     if fatal_feed_count:
         return 1
     return 1 if failed_feed_count and successful_feed_count == 0 else 0
+
+
+def scrape_feed_task(
+    *,
+    args: argparse.Namespace,
+    config: dict,
+    source: dict,
+    feed: dict,
+    retry: dict,
+    object_store: S3PayloadStore | None,
+    publisher: JsonEventPublisher | None,
+    started_at: float,
+) -> int:
+    source_id = source["source_id"]
+    feed_id = feed["feed_id"]
+    log_event(
+        SERVICE_NAME,
+        "rss_feed_task_started",
+        source_id=source_id,
+        feed_id=feed_id,
+        dry_run=args.dry_run,
+    )
+    feed_failed, _ = scrape_feed(
+        args=args,
+        config=config,
+        source=source,
+        feed=feed,
+        retry=retry,
+        object_store=object_store,
+        publisher=publisher,
+    )
+    status = "failed" if feed_failed else "success"
+    cooldown_seconds = 0 if args.dry_run else source["crawl"]["delay_seconds"]
+    if cooldown_seconds:
+        time.sleep(cooldown_seconds)
+    log_event(
+        SERVICE_NAME,
+        "rss_feed_task_completed",
+        source_id=source_id,
+        feed_id=feed_id,
+        status=status,
+        cooldown_seconds=cooldown_seconds,
+        dry_run=args.dry_run,
+        duration_ms=elapsed_ms(started_at),
+    )
+    log_metric(
+        SERVICE_NAME,
+        "rss_feed_tasks_total",
+        1,
+        source_id=source_id,
+        feed_id=feed_id,
+        status=status,
+        cooldown_seconds=cooldown_seconds,
+        dry_run=args.dry_run,
+    )
+    return int(feed_failed)
 
 
 def scrape_feed(

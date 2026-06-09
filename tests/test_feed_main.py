@@ -110,6 +110,81 @@ def test_scrape_all_feeds_fails_on_fatal_failure(monkeypatch) -> None:
     assert result == 1
 
 
+def test_scrape_single_feed_logs_task_scope(monkeypatch) -> None:
+    source = {
+        "source_id": "vnexpress",
+        "enabled": True,
+        "crawl": {"delay_seconds": 0},
+        "feed_discovery": {"feeds": [{"feed_id": "kinh_doanh"}]},
+    }
+    logs: list[tuple[str, dict]] = []
+
+    monkeypatch.setattr(feed_main, "load_settings", lambda: {"crawl": {"retry": {}}})
+    monkeypatch.setattr(feed_main, "load_sources", lambda settings: [source])
+    monkeypatch.setattr(feed_main, "scrape_feed", lambda **kwargs: (False, False))
+    monkeypatch.setattr(
+        feed_main,
+        "log_event",
+        lambda service, event, **fields: logs.append((event, fields)),
+    )
+    monkeypatch.setattr(feed_main, "log_metric", lambda *args, **kwargs: None)
+
+    result = feed_main.scrape(make_args())
+
+    assert result == 0
+    assert [event for event, _ in logs] == ["rss_feed_task_started", "rss_feed_task_completed"]
+    assert logs[-1][1]["source_id"] == "vnexpress"
+    assert logs[-1][1]["feed_id"] == "kinh_doanh"
+    assert logs[-1][1]["status"] == "success"
+
+
+def test_scrape_single_feed_failure_fails_task(monkeypatch) -> None:
+    source = {
+        "source_id": "vnexpress",
+        "enabled": True,
+        "crawl": {"delay_seconds": 0},
+        "feed_discovery": {"feeds": [{"feed_id": "kinh_doanh"}]},
+    }
+
+    monkeypatch.setattr(feed_main, "load_settings", lambda: {"crawl": {"retry": {}}})
+    monkeypatch.setattr(feed_main, "load_sources", lambda settings: [source])
+    monkeypatch.setattr(feed_main, "scrape_feed", lambda **kwargs: (True, False))
+    monkeypatch.setattr(feed_main, "log_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(feed_main, "log_metric", lambda *args, **kwargs: None)
+
+    assert feed_main.scrape(make_args()) == 1
+
+
+def test_scrape_single_feed_respects_source_cooldown(monkeypatch) -> None:
+    source = {
+        "source_id": "vnexpress",
+        "enabled": True,
+        "crawl": {"delay_seconds": 5},
+        "feed_discovery": {"feeds": [{"feed_id": "kinh_doanh"}]},
+    }
+    sleeps: list[int] = []
+
+    monkeypatch.setattr(feed_main, "scrape_feed", lambda **kwargs: (False, False))
+    monkeypatch.setattr(feed_main, "log_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(feed_main, "log_metric", lambda *args, **kwargs: None)
+    monkeypatch.setattr(feed_main.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    assert (
+        feed_main.scrape_feed_task(
+            args=make_args(dry_run=False),
+            config={},
+            source=source,
+            feed={"feed_id": "kinh_doanh"},
+            retry={},
+            object_store=None,
+            publisher=None,
+            started_at=0,
+        )
+        == 0
+    )
+    assert sleeps == [5]
+
+
 def test_scrape_feed_logs_retryable_failure_as_fatal(monkeypatch, capsys) -> None:
     def fail(**kwargs) -> None:
         raise IngestionError(
@@ -166,10 +241,10 @@ def test_scrape_feed_logs_nonretryable_failure_as_nonfatal(monkeypatch, capsys) 
     assert record["retryable"] is False
 
 
-def make_args(*, all_feeds: bool = False) -> Namespace:
+def make_args(*, all_feeds: bool = False, dry_run: bool = True) -> Namespace:
     return Namespace(
         source_id="vnexpress",
         feed_id="kinh_doanh",
         all_feeds=all_feeds,
-        dry_run=True,
+        dry_run=dry_run,
     )
