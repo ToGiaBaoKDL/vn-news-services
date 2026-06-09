@@ -111,6 +111,7 @@ def process_one(
         )
         if consumed is None:
             return 0
+        started_at = time.perf_counter()
         event = run_stage(
             "event_decode",
             False,
