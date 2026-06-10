@@ -143,6 +143,8 @@ def record_summary(record: dict[str, Any]) -> dict[str, Any]:
     }
     if "content_blocks" in event:
         summary["block_count"] = len(event["content_blocks"])
+    if "images" in event:
+        summary["image_count"] = len(event["images"])
     return summary
 
 

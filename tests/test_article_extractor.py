@@ -114,6 +114,46 @@ def test_extract_article_from_html() -> None:
     assert article.content_blocks[0].ordinal == 0
 
 
+def test_extract_article_collects_article_images() -> None:
+    html = b"""<!doctype html>
+<html>
+  <head>
+    <link rel="canonical" href="https://vnexpress.net/a.html">
+    <meta property="og:title" content="Doanh nghiep tang truong">
+  </head>
+  <body>
+    <article class="fck_detail">
+      <p>Day la doan noi dung dau tien cua bai viet kinh doanh.</p>
+      <figure class="VCSortableInPreviewMode">
+        <img
+          src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+          data-src="/images/a.jpg"
+          alt="Anh minh hoa"
+        />
+        <figcaption>Chu thich anh minh hoa co du do dai de trich xuat.</figcaption>
+      </figure>
+      <p>Day la doan noi dung thu hai voi them thong tin chi tiet.</p>
+      <div class="related-news">
+        <img src="https://cdn.example.test/related.jpg" alt="Tin lien quan" />
+      </div>
+    </article>
+  </body>
+</html>
+"""
+
+    article = extract_article(
+        html,
+        fallback_url="https://vnexpress.net/a.html",
+        extraction_config={"exclude_selectors": [".related-news"]},
+    )
+
+    assert len(article.images) == 1
+    assert article.images[0].url == "https://vnexpress.net/images/a.jpg"
+    assert article.images[0].alt == "Anh minh hoa"
+    assert article.images[0].caption == "Chu thich anh minh hoa co du do dai de trich xuat."
+    assert article.images[0].ordinal == 0
+
+
 def test_extract_article_uses_og_url_as_canonical_fallback() -> None:
     html = HTML.replace(
         b'<link rel="canonical" href="https://vnexpress.net/a.html">',
@@ -190,6 +230,7 @@ def test_article_extractor_publishes_extracted_event() -> None:
     assert event.source_payload_uri == fetched_event().payload_uri
     assert event.extractor_version == "html_article_blocks_v1"
     assert event.content_blocks[0].text.startswith("Day la doan noi dung dau tien")
+    assert event.images == []
     assert str(event.requested_url) == "https://vnexpress.net/a.html"
     assert str(event.canonical_url) == "https://vnexpress.net/a.html"
     assert event.extraction_status == "success"
@@ -315,6 +356,7 @@ def test_source_configured_extraction_selectors_keep_content_and_drop_boilerplat
     assert [block.ordinal for block in article.content_blocks] == list(
         range(len(article.content_blocks))
     )
+    assert [image.ordinal for image in article.images] == list(range(len(article.images)))
 
 
 def test_article_extractor_rejects_payload_hash_mismatch() -> None:

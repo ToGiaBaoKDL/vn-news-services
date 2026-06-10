@@ -12,12 +12,21 @@ class ExtractedTextBlock:
 
 
 @dataclass(frozen=True)
+class ExtractedImage:
+    url: str
+    alt: str | None
+    caption: str | None
+    ordinal: int
+
+
+@dataclass(frozen=True)
 class ExtractedArticle:
     canonical_url: str | None
     title: str | None
     summary: str | None
     body_text: str | None
     content_blocks: list[ExtractedTextBlock]
+    images: list[ExtractedImage]
     author: str | None
     published_at: datetime | None
     extractor_version: str
@@ -32,4 +41,5 @@ class ArticleExtractOutcome:
     title: str
     body_length: int
     block_count: int
+    image_count: int
     content_hash: str

@@ -4,7 +4,12 @@ import hashlib
 from datetime import UTC, datetime
 from urllib.parse import urljoin, urlsplit
 
-from news_platform.contracts.events import ArticleExtracted, ArticleFetched, ArticleTextBlock
+from news_platform.contracts.events import (
+    ArticleExtracted,
+    ArticleFetched,
+    ArticleImage,
+    ArticleTextBlock,
+)
 from news_platform.ids import make_stable_id, normalize_article_url
 
 from news_article_extractor.models import ArticleExtractOutcome
@@ -124,6 +129,15 @@ class ArticleExtractor:
                     )
                     for block in article.content_blocks
                 ],
+                images=[
+                    ArticleImage(
+                        url=image.url,
+                        alt=image.alt,
+                        caption=image.caption,
+                        ordinal=image.ordinal,
+                    )
+                    for image in article.images
+                ],
                 author=article.author,
                 published_at=article.published_at,
                 content_hash=content_hash,
@@ -146,6 +160,7 @@ class ArticleExtractor:
             title=article.title,
             body_length=len(article.body_text),
             block_count=len(article.content_blocks),
+            image_count=len(article.images),
             content_hash=content_hash,
         )
 

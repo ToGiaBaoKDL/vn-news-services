@@ -5,11 +5,12 @@ import re
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
+from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
-from news_article_extractor.models import ExtractedArticle, ExtractedTextBlock
+from news_article_extractor.models import ExtractedArticle, ExtractedImage, ExtractedTextBlock
 
 EXTRACTOR_VERSION = "html_article_blocks_v1"
 
@@ -46,6 +47,8 @@ DEFAULT_EXCLUDE_SELECTORS = [
     ".related-news",
     ".article-relate",
     ".relationnews",
+    ".kbwscwlrl",
+    ".kbwscwlrl-content",
     ".link-source-detail",
     ".google-news",
     ".gg-news",
@@ -104,7 +107,10 @@ def extract_article(
     )
     canonical_url = canonical_candidate or (None if require_canonical_url else fallback_url)
 
-    blocks = extract_content_blocks(soup, config)
+    remove_unwanted_nodes(soup, config)
+    containers = select_containers(soup, config)
+    blocks = content_blocks_from_containers(containers)
+    images = extract_images(containers, fallback_url=fallback_url)
     body_text = "\n\n".join(block.text for block in blocks) or None
     rejection_reason = content_rejection_reason(body_text, blocks, config)
     if rejection_reason:
@@ -116,6 +122,7 @@ def extract_article(
         summary=summary,
         body_text=body_text,
         content_blocks=blocks,
+        images=images,
         author=author,
         published_at=published_at,
         extractor_version=EXTRACTOR_VERSION,
@@ -152,7 +159,10 @@ def extract_content_blocks(
     config: dict[str, Any],
 ) -> list[ExtractedTextBlock]:
     remove_unwanted_nodes(soup, config)
-    containers = select_containers(soup, config)
+    return content_blocks_from_containers(select_containers(soup, config))
+
+
+def content_blocks_from_containers(containers: list[Tag]) -> list[ExtractedTextBlock]:
     blocks: list[ExtractedTextBlock] = []
     seen: set[str] = set()
 
@@ -175,6 +185,110 @@ def extract_content_blocks(
                 )
             )
     return blocks
+
+
+def extract_images(containers: list[Tag], *, fallback_url: str) -> list[ExtractedImage]:
+    images: list[ExtractedImage] = []
+    seen_urls: set[str] = set()
+    for container in containers:
+        for node in container.find_all("img"):
+            if not isinstance(node, Tag):
+                continue
+            url = image_url(node, fallback_url=fallback_url)
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            images.append(
+                ExtractedImage(
+                    url=url,
+                    alt=normalized_text(str(node.get("alt") or "")) or None,
+                    caption=image_caption(node),
+                    ordinal=len(images),
+                )
+            )
+    return images
+
+
+def image_url(node: Tag, *, fallback_url: str) -> str | None:
+    for attribute in (
+        "data-src",
+        "data-original",
+        "data-original-src",
+        "data-lazy-src",
+        "data-zoom-src",
+        "data-thumb",
+        "src",
+        "data-srcset",
+        "srcset",
+    ):
+        value = node.get(attribute)
+        if not value:
+            continue
+        candidate = srcset_first_url(str(value)) if "srcset" in attribute else str(value)
+        normalized = normalized_image_url(candidate, fallback_url=fallback_url)
+        if normalized:
+            return normalized
+    return None
+
+
+def srcset_first_url(value: str) -> str:
+    first_candidate = value.split(",", maxsplit=1)[0].strip()
+    return first_candidate.split(maxsplit=1)[0] if first_candidate else ""
+
+
+def normalized_image_url(value: str, *, fallback_url: str) -> str | None:
+    candidate = html.unescape(value).strip()
+    if not candidate or candidate.startswith(("data:", "javascript:", "about:")):
+        return None
+    resolved = urljoin(fallback_url, candidate)
+    parsed = urlsplit(resolved)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return resolved
+
+
+def image_caption(node: Tag) -> str | None:
+    for ancestor in image_contexts(node):
+        for selector in (
+            "figcaption",
+            ".PhotoCMS_Caption",
+            ".caption",
+            ".image_desc",
+            ".figcaption",
+            ".detail__caption",
+            ".expEdit",
+            ".cms-desc",
+        ):
+            caption_node = ancestor.select_one(selector)
+            if caption_node and isinstance(caption_node, Tag):
+                caption = normalized_text(caption_node.get_text(" ", strip=True))
+                if valid_caption(caption):
+                    return caption
+        caption = normalized_text(ancestor.get_text(" ", strip=True))
+        if valid_caption(caption):
+            return caption
+    return None
+
+
+def image_contexts(node: Tag) -> list[Tag]:
+    contexts: list[Tag] = []
+    for ancestor in node.parents:
+        if not isinstance(ancestor, Tag):
+            continue
+        classes = " ".join(ancestor.get("class", [])).lower()
+        if ancestor.name == "figure" or any(
+            marker in classes for marker in ("image", "photo", "picture", "caption", "sortable")
+        ):
+            contexts.append(ancestor)
+        if len(contexts) >= 4:
+            break
+    return contexts
+
+
+def valid_caption(value: str) -> bool:
+    if len(value) < 5 or len(value) > 500:
+        return False
+    return not any(pattern.search(value) for pattern in BOILERPLATE_PATTERNS)
 
 
 def remove_unwanted_nodes(soup: BeautifulSoup, config: dict[str, Any]) -> None:
