@@ -127,6 +127,7 @@ def process_one(
             lambda: select_enabled_source(sources, event.source_id),
         )
         retry = config["crawl"]["retry"]
+        article_policy = source["article"]
         fetcher = ArticleFetcher(
             http_client=ArticleHttpClient(
                 user_agent=config["crawl"]["user_agents"][source["crawl"]["user_agent_policy"]],
@@ -134,8 +135,12 @@ def process_one(
                 max_article_bytes=config["crawl"]["max_article_bytes"],
                 retry_attempts=retry["attempts"],
                 retry_backoff_seconds=retry["backoff_seconds"],
-                url_policy=UrlSafetyPolicy(source["domain"]),
-                blocked_status_codes=source["article"].get("blocked_status_codes", []),
+                url_policy=UrlSafetyPolicy(
+                    source["domain"],
+                    allowed_redirect_domains=article_policy.get("approved_redirect_domains", []),
+                ),
+                blocked_status_codes=article_policy.get("blocked_status_codes", []),
+                invalid_document_markers=article_policy.get("invalid_document_markers", []),
                 on_retry=lambda **fields: log_event(
                     SERVICE_NAME,
                     "article_fetch_retry",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
@@ -22,6 +22,7 @@ def default_resolver(host: str, port: int) -> list[ipaddress.IPv4Address | ipadd
 @dataclass(frozen=True)
 class UrlSafetyPolicy:
     allowed_domain: str
+    allowed_redirect_domains: Sequence[str] = ()
     resolver: Resolver = default_resolver
     max_redirects: int = 5
 
@@ -32,6 +33,7 @@ class UrlSafetyPolicy:
         stage: str,
         resolve: bool,
         retryable_dns: bool = True,
+        allow_redirect_domains: bool = False,
     ) -> str:
         parsed = urlparse(url)
         if parsed.scheme.lower() != "https":
@@ -39,10 +41,11 @@ class UrlSafetyPolicy:
         host = normalize_host(parsed.hostname)
         if not host:
             raise self._error(stage, f"URL host is missing: {url}", retryable=False)
-        if not host_matches_domain(host, self.allowed_domain):
+        allowed_domains = self._allowed_domains(include_redirects=allow_redirect_domains)
+        if not host_matches_any_domain(host, allowed_domains):
             raise self._error(
                 stage,
-                f"URL host {host} is outside allowed domain {self.allowed_domain}",
+                f"URL host {host} is outside allowed domains {', '.join(allowed_domains)}",
                 retryable=False,
             )
         if resolve:
@@ -61,6 +64,7 @@ class UrlSafetyPolicy:
             stage=stage,
             resolve=True,
             retryable_dns=True,
+            allow_redirect_domains=True,
         )
 
     def validate_dns(
@@ -109,6 +113,12 @@ class UrlSafetyPolicy:
             error_class=error_class or "UrlSafetyError",
         )
 
+    def _allowed_domains(self, *, include_redirects: bool) -> tuple[str, ...]:
+        domains = [self.allowed_domain]
+        if include_redirects:
+            domains.extend(self.allowed_redirect_domains)
+        return tuple(domain for domain in domains if domain)
+
 
 def normalize_host(host: str | None) -> str | None:
     if not host:
@@ -121,3 +131,7 @@ def host_matches_domain(host: str, domain: str) -> bool:
     return bool(normalized_domain) and (
         host == normalized_domain or host.endswith(f".{normalized_domain}")
     )
+
+
+def host_matches_any_domain(host: str, domains: Sequence[str]) -> bool:
+    return any(host_matches_domain(host, domain) for domain in domains)

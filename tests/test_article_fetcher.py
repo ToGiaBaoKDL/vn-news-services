@@ -269,6 +269,56 @@ def test_article_http_client_rejects_oversized_response() -> None:
     assert raised.value.retryable is False
 
 
+def test_article_http_client_rejects_non_html_document() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b'{"ok": true}',
+            headers={"content-type": "application/json"},
+            request=request,
+        )
+
+    with pytest.raises(HttpFetchError) as raised:
+        make_client(handler).fetch("https://vnexpress.net/a.html")
+
+    assert raised.value.error_class == "InvalidArticleDocument"
+    assert raised.value.retryable is False
+
+
+def test_article_http_client_rejects_invalid_document_marker() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"<html><head><title>Just a moment...</title></head></html>",
+            headers={"content-type": "text/html; charset=utf-8"},
+            request=request,
+        )
+
+    with pytest.raises(HttpFetchError, match="invalid-document marker") as raised:
+        make_client(handler).fetch("https://vnexpress.net/a.html")
+
+    assert raised.value.error_class == "InvalidArticleDocument"
+    assert raised.value.status_code == 200
+
+
+def test_article_http_client_uses_source_specific_invalid_document_marker() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"<html><body>publisher specific block page</body></html>",
+            headers={"content-type": "text/html"},
+            request=request,
+        )
+
+    with pytest.raises(HttpFetchError) as raised:
+        make_client(
+            handler,
+            invalid_document_markers=["publisher specific block page"],
+        ).fetch("https://vnexpress.net/a.html")
+
+    assert raised.value.error_class == "InvalidArticleDocument"
+
+
 def test_article_http_client_rejects_private_redirect_before_following() -> None:
     requested_urls: list[str] = []
 
@@ -296,6 +346,40 @@ def test_article_http_client_rejects_private_redirect_before_following() -> None
         client.fetch("https://vnexpress.net/a.html")
 
     assert requested_urls == ["https://vnexpress.net/a.html"]
+
+
+def test_article_http_client_allows_approved_related_domain_redirect() -> None:
+    requested_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        if str(request.url) == "https://baochinhphu.vn/a.html":
+            return httpx.Response(
+                302,
+                headers={"location": "https://thanglong.chinhphu.vn/b.html"},
+                request=request,
+            )
+        return httpx.Response(
+            200,
+            content=b"<html><body>ok</body></html>",
+            headers={"content-type": "text/html"},
+            request=request,
+        )
+
+    response = make_client(
+        handler,
+        url_policy=UrlSafetyPolicy(
+            "baochinhphu.vn",
+            allowed_redirect_domains=("thanglong.chinhphu.vn",),
+            resolver=public_resolver,
+        ),
+    ).fetch("https://baochinhphu.vn/a.html")
+
+    assert response.status_code == 200
+    assert requested_urls == [
+        "https://baochinhphu.vn/a.html",
+        "https://thanglong.chinhphu.vn/b.html",
+    ]
 
 
 def test_article_http_client_retries_redirect_without_location() -> None:
@@ -356,6 +440,7 @@ def make_client(
     max_article_bytes: int = 1024,
     url_policy: UrlSafetyPolicy | None = None,
     blocked_status_codes: list[int] | None = None,
+    invalid_document_markers: list[str] | None = None,
 ) -> ArticleHttpClient:
     transport = httpx.MockTransport(handler)
     return ArticleHttpClient(
@@ -369,4 +454,5 @@ def make_client(
         on_retry=on_retry,
         url_policy=url_policy,
         blocked_status_codes=blocked_status_codes or [],
+        invalid_document_markers=invalid_document_markers or [],
     )

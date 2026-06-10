@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import httpx
 
@@ -9,6 +9,21 @@ from news_article_fetcher.models import ArticleHttpResponse
 from news_service_common.errors import HttpFetchError
 from news_service_common.http import is_retryable_http_status, read_limited_content
 from news_service_common.url_safety import UrlSafetyPolicy
+
+DEFAULT_INVALID_DOCUMENT_MARKERS = (
+    "<title>just a moment",
+    "checking your browser before accessing",
+    "/cdn-cgi/challenge-platform/",
+    "cf-chl-",
+    "__jsl_clearance",
+    "<title>access denied</title>",
+    "<title>request rejected</title>",
+    "<title>403 forbidden</title>",
+    "<title>404 not found</title>",
+    "<title>not found</title>",
+)
+
+HTML_CONTENT_TYPES = {"text/html", "application/xhtml+xml"}
 
 
 class ArticleHttpClient:
@@ -25,6 +40,7 @@ class ArticleHttpClient:
         on_retry: Callable[..., None] | None = None,
         url_policy: UrlSafetyPolicy | None = None,
         blocked_status_codes: list[int] | set[int] | tuple[int, ...] = (),
+        invalid_document_markers: Sequence[str] = (),
     ) -> None:
         self.user_agent = user_agent
         self.timeout_seconds = timeout_seconds
@@ -38,6 +54,11 @@ class ArticleHttpClient:
         self.on_retry = on_retry
         self.url_policy = url_policy
         self.blocked_status_codes = set(blocked_status_codes)
+        self.invalid_document_markers = tuple(
+            marker.strip()
+            for marker in (*DEFAULT_INVALID_DOCUMENT_MARKERS, *invalid_document_markers)
+            if marker.strip()
+        )
 
     def fetch(self, url: str) -> ArticleHttpResponse:
         if self.url_policy:
@@ -142,6 +163,7 @@ class ArticleHttpClient:
                         retryable=False,
                         status_code=response.status_code,
                     )
+                self._validate_article_document(response, content)
                 return ArticleHttpResponse(
                     status_code=response.status_code,
                     content=content,
@@ -151,6 +173,26 @@ class ArticleHttpClient:
 
     def _max_redirects(self) -> int:
         return self.url_policy.max_redirects if self.url_policy else 5
+
+    def _validate_article_document(self, response: httpx.Response, content: bytes) -> None:
+        content_type = response.headers.get("content-type")
+        if content_type and media_type(content_type) not in HTML_CONTENT_TYPES:
+            raise HttpFetchError(
+                f"Article response is not HTML: {content_type}",
+                stage="article_fetch",
+                retryable=False,
+                status_code=response.status_code,
+                error_class="InvalidArticleDocument",
+            )
+        marker = matched_invalid_document_marker(content, self.invalid_document_markers)
+        if marker:
+            raise HttpFetchError(
+                f"Article response matches invalid-document marker: {marker}",
+                stage="article_fetch",
+                retryable=False,
+                status_code=response.status_code,
+                error_class="InvalidArticleDocument",
+            )
 
     def _sleep_before_retry(
         self,
@@ -170,3 +212,15 @@ class ArticleHttpClient:
                 status_code=status_code,
             )
         self.sleep(delay_seconds)
+
+
+def media_type(content_type: str) -> str:
+    return content_type.split(";", maxsplit=1)[0].strip().lower()
+
+
+def matched_invalid_document_marker(content: bytes, markers: Sequence[str]) -> str | None:
+    sample = content[:65536].decode("utf-8", errors="ignore").lower()
+    for marker in markers:
+        if marker.lower() in sample:
+            return marker
+    return None

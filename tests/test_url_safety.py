@@ -36,6 +36,30 @@ def test_url_safety_rejects_http_and_external_domain() -> None:
         policy.validate_url("https://evil.example/a.html", stage="article_fetch", resolve=False)
 
 
+def test_url_safety_allows_redirect_domain_only_for_redirect_target() -> None:
+    policy = UrlSafetyPolicy(
+        "baochinhphu.vn",
+        allowed_redirect_domains=("thanglong.chinhphu.vn",),
+        resolver=lambda host, port: [ipaddress.ip_address("8.8.8.8")],
+    )
+
+    with pytest.raises(IngestionError, match="outside allowed domain"):
+        policy.validate_url(
+            "https://thanglong.chinhphu.vn/a.html",
+            stage="article_fetch",
+            resolve=False,
+        )
+
+    assert (
+        policy.redirect_target(
+            "https://baochinhphu.vn/a.html",
+            "https://thanglong.chinhphu.vn/b.html",
+            stage="article_fetch",
+        )
+        == "https://thanglong.chinhphu.vn/b.html"
+    )
+
+
 def test_url_safety_rejects_private_dns_targets() -> None:
     policy = UrlSafetyPolicy(
         "vnexpress.net",
