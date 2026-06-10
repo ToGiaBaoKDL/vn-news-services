@@ -4,7 +4,7 @@ import hashlib
 from datetime import UTC, datetime
 from urllib.parse import urljoin, urlsplit
 
-from news_platform.contracts.events import ArticleExtracted, ArticleFetched
+from news_platform.contracts.events import ArticleExtracted, ArticleFetched, ArticleTextBlock
 from news_platform.ids import make_stable_id, normalize_article_url
 
 from news_article_extractor.models import ArticleExtractOutcome
@@ -68,6 +68,7 @@ class ArticleExtractor:
                 payload,
                 fallback_url=str(event.requested_url),
                 require_canonical_url=require_canonical_url,
+                extraction_config=article_config.get("extraction"),
             ),
         )
         if require_canonical_url and not article.canonical_url:
@@ -75,6 +76,12 @@ class ArticleExtractor:
                 stage="article_extract",
                 retryable=False,
                 message="Article extraction did not produce required canonical URL",
+            )
+        if article.rejection_reason:
+            raise IngestionError(
+                stage="article_extract",
+                retryable=False,
+                message=f"Article extraction rejected document: {article.rejection_reason}",
             )
         if not article.title or not article.body_text:
             raise IngestionError(
@@ -91,10 +98,10 @@ class ArticleExtractor:
             "article_extract",
             False,
             lambda: ArticleExtracted(
-                schema_version="article.extracted.v2",
+                schema_version="article.extracted.v3",
                 event_id=make_stable_id(
                     "event",
-                    "article.extracted.v2",
+                    "article.extracted.v3",
                     event.article_id,
                     event.source_document_id,
                     content_hash,
@@ -109,10 +116,20 @@ class ArticleExtractor:
                 title=article.title,
                 summary=article.summary,
                 body_text=article.body_text,
+                content_blocks=[
+                    ArticleTextBlock(
+                        type=block.type,
+                        text=block.text,
+                        ordinal=block.ordinal,
+                    )
+                    for block in article.content_blocks
+                ],
                 author=article.author,
                 published_at=article.published_at,
                 content_hash=content_hash,
                 source_document_id=event.source_document_id,
+                source_payload_uri=event.payload_uri,
+                extractor_version=article.extractor_version,
                 extraction_status="success",
             ),
         )
@@ -128,6 +145,7 @@ class ArticleExtractor:
             article_id=event.article_id,
             title=article.title,
             body_length=len(article.body_text),
+            block_count=len(article.content_blocks),
             content_hash=content_hash,
         )
 

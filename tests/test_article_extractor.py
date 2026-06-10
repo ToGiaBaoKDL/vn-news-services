@@ -4,6 +4,7 @@ import hashlib
 from datetime import UTC, date, datetime
 
 import pytest
+from news_platform.config import load_sources
 from news_platform.contracts.events import ArticleFetched
 
 from news_article_extractor.parser import extract_article
@@ -56,6 +57,8 @@ def test_extract_article_from_html() -> None:
     assert article.author == "Nguyen Van A"
     assert article.published_at.isoformat() == "2026-06-01T08:00:00+07:00"
     assert "doan noi dung dau tien" in article.body_text
+    assert [block.type for block in article.content_blocks] == ["paragraph", "paragraph"]
+    assert article.content_blocks[0].ordinal == 0
 
 
 def test_extract_article_uses_og_url_as_canonical_fallback() -> None:
@@ -125,11 +128,15 @@ def test_article_extractor_publishes_extracted_event() -> None:
 
     assert outcome.status == "published"
     assert outcome.body_length > 20
+    assert outcome.block_count == 2
     assert [topic for topic, _ in publisher.events] == ["article_extracted"]
     event = publisher.events[0][1]
-    assert event.schema_version == "article.extracted.v2"
+    assert event.schema_version == "article.extracted.v3"
     assert event.title == "Doanh nghiep tang truong"
     assert event.source_document_id == "source_doc_1"
+    assert event.source_payload_uri == fetched_event().payload_uri
+    assert event.extractor_version == "html_article_blocks_v1"
+    assert event.content_blocks[0].text.startswith("Day la doan noi dung dau tien")
     assert str(event.requested_url) == "https://vnexpress.net/a.html"
     assert str(event.canonical_url) == "https://vnexpress.net/a.html"
     assert event.extraction_status == "success"
@@ -214,6 +221,43 @@ def test_article_extractor_rejects_missing_body() -> None:
 
     assert raised.value.stage == "article_extract"
     assert raised.value.retryable is False
+    assert "rejected document" in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "source_id",
+    [
+        "baochinhphu",
+        "cafef",
+        "dantri",
+        "genk",
+        "kenh14",
+        "thanhnien",
+        "tienphong",
+        "tuoitre",
+        "vneconomy",
+        "vnexpress",
+    ],
+)
+def test_source_configured_extraction_selectors_keep_content_and_drop_boilerplate(
+    source_id: str,
+) -> None:
+    source = {source["source_id"]: source for source in load_sources()}[source_id]
+    article = extract_article(
+        source_layout_fixture(source_id),
+        fallback_url=f"https://{source['domain']}/fixture.html",
+        require_canonical_url=True,
+        extraction_config=source["article"]["extraction"],
+    )
+
+    assert article.rejection_reason is None
+    assert article.body_text is not None
+    assert f"NOI_DUNG_CHINH_{source_id}" in article.body_text
+    assert f"BOILERPLATE_{source_id}" not in article.body_text
+    assert len(article.content_blocks) >= 2
+    assert [block.ordinal for block in article.content_blocks] == list(
+        range(len(article.content_blocks))
+    )
 
 
 def test_article_extractor_rejects_payload_hash_mismatch() -> None:
@@ -290,6 +334,97 @@ def source_fixture_html(
   <body>
     <p>Day la doan noi dung {source_id} dau tien du dai de trich xuat.</p>
     <p>Day la doan noi dung {source_id} thu hai de kiem tra ghep van ban.</p>
+  </body>
+</html>
+""".encode()
+
+
+def source_layout_fixture(source_id: str) -> bytes:
+    fixtures = {
+        "baochinhphu": """
+          <div class="detail-content afcbc-body clearfix">
+            <p>NOI_DUNG_CHINH_baochinhphu doan mot du dai de kiem tra trich xuat.</p>
+            <p>NOI_DUNG_CHINH_baochinhphu doan hai giu dung thu tu ngu nghia.</p>
+            <div class="kbwscwlrl-content"><p>BOILERPLATE_baochinhphu tin lien quan.</p></div>
+          </div>
+        """,
+        "cafef": """
+          <div id="mainContent">
+            <div class="detail-content afcbc-body">
+              <p>NOI_DUNG_CHINH_cafef doan mot du dai de kiem tra trich xuat day du.</p>
+              <p>NOI_DUNG_CHINH_cafef doan hai giu dung thu tu ngu nghia on dinh.</p>
+              <div id="listNewsInContent"><p>BOILERPLATE_cafef tin lien quan.</p></div>
+            </div>
+          </div>
+        """,
+        "dantri": """
+          <article data-slot="container">
+            <div id="desktop-in-article" data-slot="content">
+              <p>NOI_DUNG_CHINH_dantri doan mot du dai de kiem tra trich xuat.</p>
+              <p>NOI_DUNG_CHINH_dantri doan hai giu dung thu tu ngu nghia.</p>
+              <section class="article-business"><p>BOILERPLATE_dantri doanh nghiep.</p></section>
+            </div>
+          </article>
+        """,
+        "genk": """
+          <div id="ContentDetail" class="knc-content detail-content">
+            <p>NOI_DUNG_CHINH_genk doan mot du dai de kiem tra trich xuat day du.</p>
+            <p>NOI_DUNG_CHINH_genk doan hai giu dung thu tu ngu nghia on dinh.</p>
+            <div class="link-source-detail"><p>BOILERPLATE_genk nguon bai viet.</p></div>
+          </div>
+        """,
+        "kenh14": """
+          <div class="detail-content afcbc-body">
+            <p>NOI_DUNG_CHINH_kenh14 doan mot du dai de kiem tra trich xuat.</p>
+            <p>NOI_DUNG_CHINH_kenh14 doan hai giu dung thu tu ngu nghia.</p>
+            <div class="knc-relate-wrapper"><p>BOILERPLATE_kenh14 tin lien quan.</p></div>
+          </div>
+        """,
+        "thanhnien": """
+          <div class="detail-content afcbc-body">
+            <p>NOI_DUNG_CHINH_thanhnien doan mot du dai de kiem tra trich xuat.</p>
+            <p>NOI_DUNG_CHINH_thanhnien doan hai giu dung thu tu ngu nghia.</p>
+            <div class="seo-suggest-link"><p>BOILERPLATE_thanhnien goi y lien ket.</p></div>
+          </div>
+        """,
+        "tienphong": """
+          <div class="article__body zce-content-body cms-body">
+            <p>NOI_DUNG_CHINH_tienphong doan mot du dai de kiem tra trich xuat.</p>
+            <p>NOI_DUNG_CHINH_tienphong doan hai giu dung thu tu ngu nghia.</p>
+            <div class="article-relate"><p>BOILERPLATE_tienphong tin lien quan.</p></div>
+          </div>
+        """,
+        "tuoitre": """
+          <div class="detail-content afcbc-body">
+            <p>NOI_DUNG_CHINH_tuoitre doan mot du dai de kiem tra trich xuat.</p>
+            <p>NOI_DUNG_CHINH_tuoitre doan hai giu dung thu tu ngu nghia.</p>
+            <div class="link-inline-content"><p>BOILERPLATE_tuoitre lien ket noi dung.</p></div>
+          </div>
+        """,
+        "vneconomy": """
+          <div class="ct-edtior-web news-type1">
+            <p>NOI_DUNG_CHINH_vneconomy doan mot du dai de kiem tra trich xuat.</p>
+            <p>NOI_DUNG_CHINH_vneconomy doan hai giu dung thu tu ngu nghia.</p>
+            <div class="news-general"><p>BOILERPLATE_vneconomy tin doc them.</p></div>
+          </div>
+        """,
+        "vnexpress": """
+          <article class="fck_detail">
+            <p>NOI_DUNG_CHINH_vnexpress doan mot du dai de kiem tra trich xuat.</p>
+            <p>NOI_DUNG_CHINH_vnexpress doan hai giu dung thu tu ngu nghia.</p>
+            <div id="article-end"><p>BOILERPLATE_vnexpress ket thuc bai viet.</p></div>
+          </article>
+        """,
+    }
+    domain = "example.test"
+    return f"""<!doctype html>
+<html>
+  <head>
+    <link rel="canonical" href="https://{domain}/{source_id}.html">
+    <meta property="og:title" content="Tieu de {source_id}">
+  </head>
+  <body>
+    {fixtures[source_id]}
   </body>
 </html>
 """.encode()

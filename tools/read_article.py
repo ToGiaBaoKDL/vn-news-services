@@ -129,16 +129,21 @@ def record_summary(record: dict[str, Any]) -> dict[str, Any]:
         "title",
         "published_at",
         "source_document_id",
+        "source_payload_uri",
         "content_hash",
         "payload_uri",
+        "extractor_version",
     )
-    return {
+    summary = {
         "stage": record["stage"],
         "topic": record["topic"],
         "partition": record["partition"],
         "offset": record["offset"],
         **{key: event[key] for key in keys if key in event},
     }
+    if "content_blocks" in event:
+        summary["block_count"] = len(event["content_blocks"])
+    return summary
 
 
 def fetched_html(
