@@ -4,7 +4,6 @@ import hashlib
 from datetime import UTC, date, datetime
 
 import pytest
-from news_platform.config import load_sources
 from news_platform.contracts.events import ArticleFetched
 
 from news_article_extractor.parser import extract_article
@@ -27,6 +26,60 @@ HTML = b"""<!doctype html>
   </body>
 </html>
 """
+
+
+SOURCE_EXTRACTION_FIXTURES = {
+    "baochinhphu": {
+        "domain": "baochinhphu.vn",
+        "content_selectors": [".detail-content.afcbc-body", ".detail-content"],
+        "exclude_selectors": [".kbwscwlrl-content"],
+    },
+    "cafef": {
+        "domain": "cafef.vn",
+        "content_selectors": [".detail-content.afcbc-body", "#mainContent"],
+        "exclude_selectors": ["#listNewsInContent"],
+    },
+    "dantri": {
+        "domain": "dantri.com.vn",
+        "content_selectors": ["#desktop-in-article", '[data-slot="content"]'],
+        "exclude_selectors": [".article-business"],
+    },
+    "genk": {
+        "domain": "genk.vn",
+        "content_selectors": ["#ContentDetail", ".knc-content.detail-content"],
+        "exclude_selectors": [".link-source-detail"],
+    },
+    "kenh14": {
+        "domain": "kenh14.vn",
+        "content_selectors": [".detail-content.afcbc-body", ".detail-content"],
+        "exclude_selectors": [".knc-relate-wrapper"],
+    },
+    "thanhnien": {
+        "domain": "thanhnien.vn",
+        "content_selectors": [".detail-content.afcbc-body", ".detail-content"],
+        "exclude_selectors": [".seo-suggest-link"],
+    },
+    "tienphong": {
+        "domain": "tienphong.vn",
+        "content_selectors": [".article__body.cms-body", ".article__body"],
+        "exclude_selectors": [".article-relate"],
+    },
+    "tuoitre": {
+        "domain": "tuoitre.vn",
+        "content_selectors": [".detail-content.afcbc-body", ".detail-content"],
+        "exclude_selectors": [".link-inline-content"],
+    },
+    "vneconomy": {
+        "domain": "vneconomy.vn",
+        "content_selectors": [".ct-edtior-web.news-type1", ".ct-edtior-web"],
+        "exclude_selectors": [".news-general"],
+    },
+    "vnexpress": {
+        "domain": "vnexpress.net",
+        "content_selectors": ["article.fck_detail", ".fck_detail"],
+        "exclude_selectors": ["#article-end"],
+    },
+}
 
 
 class FakeObjectStore:
@@ -242,12 +295,16 @@ def test_article_extractor_rejects_missing_body() -> None:
 def test_source_configured_extraction_selectors_keep_content_and_drop_boilerplate(
     source_id: str,
 ) -> None:
-    source = {source["source_id"]: source for source in load_sources()}[source_id]
+    source = SOURCE_EXTRACTION_FIXTURES[source_id]
     article = extract_article(
         source_layout_fixture(source_id),
         fallback_url=f"https://{source['domain']}/fixture.html",
         require_canonical_url=True,
-        extraction_config=source["article"]["extraction"],
+        extraction_config={
+            "content_selectors": source["content_selectors"],
+            "exclude_selectors": source["exclude_selectors"],
+            "min_text_chars": 120,
+        },
     )
 
     assert article.rejection_reason is None
