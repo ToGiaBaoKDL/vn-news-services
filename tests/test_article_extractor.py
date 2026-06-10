@@ -135,6 +135,29 @@ def test_article_extractor_publishes_extracted_event() -> None:
     assert event.extraction_status == "success"
 
 
+def test_article_extractor_resolves_relative_canonical_url() -> None:
+    html = HTML.replace(
+        b'<link rel="canonical" href="https://vnexpress.net/a.html">',
+        b'<link rel="canonical" href="/oto-xe-may/v-car/article.html">',
+    )
+    publisher = FakePublisher()
+    extractor = ArticleExtractor(
+        object_store=FakeObjectStore(html),
+        publisher=publisher,
+        source={
+            "article": {
+                "extractor": "html_article",
+                "attribution_policy": "canonical_link_required",
+            }
+        },
+    )
+
+    extractor.extract(fetched_event(html))
+
+    event = publisher.events[0][1]
+    assert str(event.canonical_url) == "https://vnexpress.net/oto-xe-may/v-car/article.html"
+
+
 def test_article_extractor_event_id_changes_for_new_source_document() -> None:
     publisher = FakePublisher()
     extractor = ArticleExtractor(

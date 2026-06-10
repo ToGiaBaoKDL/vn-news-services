@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
+from urllib.parse import urljoin, urlsplit
 
 from news_platform.contracts.events import ArticleExtracted, ArticleFetched
 from news_platform.ids import make_stable_id, normalize_article_url
@@ -81,31 +82,39 @@ class ArticleExtractor:
                 retryable=False,
                 message="Article extraction did not produce required title and body_text",
             )
+        canonical_url = resolved_article_url(
+            article.canonical_url,
+            fallback_url=str(event.requested_url),
+        )
         content_hash = hashlib.sha256(article.body_text.encode()).hexdigest()
-        extracted_event = ArticleExtracted(
-            schema_version="article.extracted.v2",
-            event_id=make_stable_id(
-                "event",
-                "article.extracted.v2",
-                event.article_id,
-                event.source_document_id,
-                content_hash,
+        extracted_event = run_stage(
+            "article_extract",
+            False,
+            lambda: ArticleExtracted(
+                schema_version="article.extracted.v2",
+                event_id=make_stable_id(
+                    "event",
+                    "article.extracted.v2",
+                    event.article_id,
+                    event.source_document_id,
+                    content_hash,
+                ),
+                event_time=observed_at,
+                run_id=event.run_id,
+                source_id=event.source_id,
+                ingest_date=event.ingest_date,
+                article_id=event.article_id,
+                requested_url=event.requested_url,
+                canonical_url=canonical_url,
+                title=article.title,
+                summary=article.summary,
+                body_text=article.body_text,
+                author=article.author,
+                published_at=article.published_at,
+                content_hash=content_hash,
+                source_document_id=event.source_document_id,
+                extraction_status="success",
             ),
-            event_time=observed_at,
-            run_id=event.run_id,
-            source_id=event.source_id,
-            ingest_date=event.ingest_date,
-            article_id=event.article_id,
-            requested_url=event.requested_url,
-            canonical_url=normalize_article_url(str(article.canonical_url or event.requested_url)),
-            title=article.title,
-            summary=article.summary,
-            body_text=article.body_text,
-            author=article.author,
-            published_at=article.published_at,
-            content_hash=content_hash,
-            source_document_id=event.source_document_id,
-            extraction_status="success",
         )
         run_stage(
             "event_publish",
@@ -121,3 +130,16 @@ class ArticleExtractor:
             body_length=len(article.body_text),
             content_hash=content_hash,
         )
+
+
+def resolved_article_url(candidate_url: str | None, *, fallback_url: str) -> str:
+    resolved_url = urljoin(fallback_url, candidate_url or fallback_url)
+    normalized_url = normalize_article_url(resolved_url)
+    parsed = urlsplit(normalized_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise IngestionError(
+            stage="article_extract",
+            retryable=False,
+            message=f"Article extraction produced invalid canonical URL: {candidate_url}",
+        )
+    return normalized_url
