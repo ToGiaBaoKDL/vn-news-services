@@ -23,7 +23,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--group-id", default="dlq_operator")
     parser.add_argument("--poll-timeout-seconds", type=float, default=10.0)
     parser.add_argument("--max-events", type=int, default=1)
-    return parser.parse_args()
+    parser.add_argument("--reason", help="Required disposition reason for replay or commit.")
+    parser.add_argument("--operator-id", default="dlq_operator")
+    args = parser.parse_args()
+    if args.action in {"replay", "commit"} and not args.reason:
+        parser.error("--reason is required for replay or commit")
+    return args
 
 
 def run() -> int:
@@ -76,6 +81,8 @@ def run() -> int:
                     consumed=consumed,
                     consumer=consumer,
                     publisher=publisher,
+                    reason=args.reason,
+                    operator_id=args.operator_id,
                 )
             except Exception as error:
                 offset_fields = (
@@ -115,6 +122,8 @@ def process_dlq_event(
     consumed: ConsumedEvent,
     consumer: JsonEventConsumer,
     publisher: JsonEventPublisher | None,
+    reason: str | None = None,
+    operator_id: str = SERVICE_NAME,
 ) -> NewsDlq:
     dlq_event = run_stage(
         "event_decode",
@@ -130,13 +139,21 @@ def process_dlq_event(
         "topic": consumed.topic,
         "partition": consumed.partition,
         "offset": consumed.offset,
+        "operator_id": operator_id,
     }
     if action == "inspect":
         log_event(SERVICE_NAME, "dlq_event_inspected", committed=False, **common_fields)
         return dlq_event
     if action == "commit":
         run_stage("event_commit", True, lambda: consumer.commit(consumed))
-        log_event(SERVICE_NAME, "dlq_event_committed", committed=True, **common_fields)
+        log_event(
+            SERVICE_NAME,
+            "dlq_event_committed",
+            committed=True,
+            disposition_action="commit",
+            disposition_reason=reason,
+            **common_fields,
+        )
         return dlq_event
     if publisher is None:
         raise RuntimeError("DLQ replay requires an event publisher")
@@ -146,6 +163,8 @@ def process_dlq_event(
         SERVICE_NAME,
         "dlq_event_replayed",
         committed=True,
+        disposition_action="replay",
+        disposition_reason=reason,
         replayed_topic_key=replayed_topic_key,
         **common_fields,
     )

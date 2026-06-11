@@ -82,6 +82,8 @@ def test_process_dlq_commit_disposes_event_without_replay() -> None:
         consumed=consumed,
         consumer=consumer,
         publisher=publisher,
+        reason="accepted permanent invalid input",
+        operator_id="test_operator",
     )
 
     assert consumer.committed == [consumed]
@@ -99,6 +101,8 @@ def test_process_dlq_replay_commits_after_publish() -> None:
         consumed=consumed,
         consumer=consumer,
         publisher=publisher,
+        reason="parser fixed",
+        operator_id="test_operator",
     )
 
     assert publisher.events[0][0] == "article_fetch_requested"
