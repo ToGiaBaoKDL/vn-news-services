@@ -17,6 +17,7 @@ from news_service_common.events import (
     JsonEventPublisher,
     make_dlq_event,
 )
+from news_service_common.metrics import publish_pipeline_metric_safely
 from news_service_common.telemetry import log_event, log_metric
 
 RETRYABLE_CONSUMED_ERROR = 2
@@ -121,6 +122,7 @@ def handle_consumed_error(
     error: Exception,
     started_at: float,
     retry_backoff: ConsumedRetryBackoff | None = None,
+    metric_publisher: JsonEventPublisher | None = None,
     shutdown: ShutdownSignal | None = None,
 ) -> int:
     fields = error_fields(error)
@@ -170,6 +172,19 @@ def handle_consumed_error(
         )
         return 0
     if consumed and isinstance(error, IngestionError) and error.retryable:
+        if metric_publisher:
+            publish_pipeline_metric_safely(
+                service_name=service_name,
+                publisher=metric_publisher,
+                metric_name="consumer_retry_count",
+                dimensions={
+                    "topic": consumed.topic,
+                    "partition": consumed.partition,
+                    "stage": fields["stage"],
+                    "error_class": fields["error_class"],
+                    "source_id": source_id_from_consumed(consumed),
+                },
+            )
         consumer.seek(consumed)
         log_event(
             service_name,
@@ -193,6 +208,14 @@ def handle_consumed_error(
         **fields,
     )
     return 1
+
+
+def source_id_from_consumed(consumed: ConsumedEvent) -> str | None:
+    try:
+        source_id = consumed.decode_value().get("source_id")
+    except Exception:
+        return None
+    return source_id if isinstance(source_id, str) and source_id else None
 
 
 def should_stop_after_process(result: int, *, once: bool) -> int | None:

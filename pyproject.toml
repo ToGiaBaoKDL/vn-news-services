@@ -10,6 +10,7 @@ members = [
   "services/feed_ingestor",
   "services/article_fetcher",
   "services/article_extractor",
+  "services/pipeline_metrics",
   "services/dlq_operator",
 ]
 
@@ -27,6 +28,7 @@ src = [
   "services/feed_ingestor/src",
   "services/article_fetcher/src",
   "services/article_extractor/src",
+  "services/pipeline_metrics/src",
   "services/dlq_operator/src",
   "tests",
 ]
@@ -46,4 +48,5 @@ pythonpath = [
   "services/feed_ingestor/src",
   "services/article_fetcher/src",
   "services/article_extractor/src",
+  "services/pipeline_metrics/src",
 ]

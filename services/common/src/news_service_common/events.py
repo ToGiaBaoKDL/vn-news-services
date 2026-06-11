@@ -22,6 +22,7 @@ from news_platform.contracts.events import (
     BaseEvent,
     FeedItemDiscovered,
     NewsDlq,
+    PipelineMetricObserved,
     event_json_schema,
 )
 from news_platform.ids import make_stable_id
@@ -128,8 +129,8 @@ class JsonEventPublisher:
         )
         self.producer.poll(0)
 
-    def flush(self) -> None:
-        pending = self.producer.flush(10)
+    def flush(self, timeout_seconds: float = 10.0) -> None:
+        pending = self.producer.flush(timeout_seconds)
         delivery_errors, self.delivery_errors = self.delivery_errors, []
         if pending:
             msg = f"Timed out with {pending} pending Redpanda messages"
@@ -291,6 +292,8 @@ def event_message_key(topic_key: str, event: BaseEvent) -> str:
             f"{'' if event.source_partition is None else event.source_partition}:"
             f"{'' if event.source_offset is None else event.source_offset}"
         )
+    if isinstance(event, PipelineMetricObserved):
+        return f"{event.service}:{event.metric_name}"
     raise ValueError(f"Unsupported event type for topic {topic_key}: {type(event).__name__}")
 
 
@@ -322,4 +325,37 @@ def make_dlq_event(
         error_class=error_class,
         error_message=error_message,
         payload=payload,
+    )
+
+
+def make_pipeline_metric_event(
+    *,
+    service: str,
+    metric_name: str,
+    metric_value: int | float,
+    metric_unit: str = "count",
+    dimensions: dict[str, Any] | None = None,
+) -> PipelineMetricObserved:
+    observed_at = datetime.now(UTC)
+    clean_dimensions = {
+        key: str(value)
+        for key, value in sorted((dimensions or {}).items())
+        if value is not None and str(value) != ""
+    }
+    event_id = make_stable_id(
+        "event",
+        "pipeline.metric_observed.v1",
+        service,
+        metric_name,
+        observed_at.isoformat(),
+    )
+    return PipelineMetricObserved(
+        schema_version="pipeline.metric_observed.v1",
+        event_id=event_id,
+        event_time=observed_at,
+        service=service,
+        metric_name=metric_name,
+        metric_value=float(metric_value),
+        metric_unit=metric_unit,
+        dimensions=clean_dimensions,
     )

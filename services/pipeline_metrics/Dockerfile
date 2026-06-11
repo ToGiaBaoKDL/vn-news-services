@@ -17,14 +17,14 @@ COPY services/article_extractor/pyproject.toml services/article_extractor/pyproj
 COPY services/pipeline_metrics/pyproject.toml services/pipeline_metrics/pyproject.toml
 COPY services/dlq_operator/pyproject.toml services/dlq_operator/pyproject.toml
 
-RUN --mount=type=cache,id=uv-dlq-operator,sharing=locked,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --package news-dlq-operator --no-install-workspace
+RUN --mount=type=cache,id=uv-pipeline-metrics,sharing=locked,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package news-pipeline-metrics --no-install-workspace
 
 COPY services/common services/common
-COPY services/dlq_operator services/dlq_operator
+COPY services/pipeline_metrics services/pipeline_metrics
 
-RUN --mount=type=cache,id=uv-dlq-operator,sharing=locked,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --package news-dlq-operator --no-editable
+RUN --mount=type=cache,id=uv-pipeline-metrics,sharing=locked,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package news-pipeline-metrics --no-editable
 
 FROM python:3.12.13-slim
 
@@ -42,4 +42,4 @@ COPY --from=builder /app/.venv /app/.venv
 
 USER app
 
-ENTRYPOINT ["python", "-m", "news_dlq_operator.main"]
+ENTRYPOINT ["python", "-m", "news_pipeline_metrics.main"]

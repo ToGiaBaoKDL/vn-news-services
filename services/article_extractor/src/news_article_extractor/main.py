@@ -48,6 +48,7 @@ def run() -> int:
         config = run_stage("config_load", False, load_settings)
         sources = run_stage("config_load", False, lambda: load_sources(settings=config))
         publisher = run_stage("event_bus_connect", True, lambda: JsonEventPublisher(config))
+        metric_publisher = run_stage("event_bus_connect", True, lambda: JsonEventPublisher(config))
         consumer = run_stage(
             "event_bus_connect",
             True,
@@ -79,6 +80,7 @@ def run() -> int:
                 consumer,
                 object_store,
                 retry_backoff,
+                metric_publisher,
                 shutdown,
             )
             exit_code = should_stop_after_process(result, once=args.once)
@@ -98,6 +100,7 @@ def process_one(
     consumer: JsonEventConsumer,
     object_store: S3PayloadStore,
     retry_backoff: ConsumedRetryBackoff,
+    metric_publisher: JsonEventPublisher,
     shutdown: ShutdownSignal,
 ) -> int:
     started_at = time.perf_counter()
@@ -163,6 +166,7 @@ def process_one(
             error=error,
             started_at=started_at,
             retry_backoff=retry_backoff,
+            metric_publisher=metric_publisher,
             shutdown=shutdown,
         )
 

@@ -14,6 +14,7 @@ COPY services/common/pyproject.toml services/common/pyproject.toml
 COPY services/feed_ingestor/pyproject.toml services/feed_ingestor/pyproject.toml
 COPY services/article_fetcher/pyproject.toml services/article_fetcher/pyproject.toml
 COPY services/article_extractor/pyproject.toml services/article_extractor/pyproject.toml
+COPY services/pipeline_metrics/pyproject.toml services/pipeline_metrics/pyproject.toml
 COPY services/dlq_operator/pyproject.toml services/dlq_operator/pyproject.toml
 
 RUN --mount=type=cache,id=uv-article-fetcher,sharing=locked,target=/root/.cache/uv \

@@ -15,6 +15,7 @@ from news_service_common.events import (
     decode_schema_registry_json,
     event_message_key,
     make_dlq_event,
+    make_pipeline_metric_event,
 )
 from news_service_common.runtime import (
     ConsumedRetryBackoff,
@@ -158,13 +159,14 @@ def test_retryable_consumed_error_keeps_worker_alive_without_commit() -> None:
         consumed=consumed,
         error=IngestionError(stage="payload_write", retryable=True, message="S3 unavailable"),
         started_at=time.perf_counter(),
+        metric_publisher=publisher,
     )
 
     assert result == 2
     assert consumer.committed == []
     assert consumer.seeked == [consumed]
-    assert publisher.events == []
-    assert publisher.flushed is False
+    assert [topic_key for topic_key, _event in publisher.events] == ["pipeline_metric"]
+    assert publisher.flushed is True
 
 
 def test_retryable_consumed_error_waits_with_bounded_backoff() -> None:
@@ -196,6 +198,7 @@ def test_retryable_consumed_error_waits_with_bounded_backoff() -> None:
             ),
             started_at=time.perf_counter(),
             retry_backoff=backoff,
+            metric_publisher=publisher,
             shutdown=ShutdownSignal(),
         )
         assert result == 2
@@ -203,6 +206,11 @@ def test_retryable_consumed_error_waits_with_bounded_backoff() -> None:
     assert consumer.committed == []
     assert consumer.seeked == [consumed, consumed, consumed]
     assert sleeps == [2, 4, 5]
+    assert [topic_key for topic_key, _event in publisher.events] == [
+        "pipeline_metric",
+        "pipeline_metric",
+        "pipeline_metric",
+    ]
 
 
 def test_unexpected_consumed_error_stops_worker_without_commit() -> None:
@@ -256,6 +264,21 @@ def test_make_dlq_event_is_stable_for_same_source_message() -> None:
     assert first.schema_version == "news.dlq.v1"
 
 
+def test_make_pipeline_metric_event_cleans_dimensions() -> None:
+    event = make_pipeline_metric_event(
+        service="article_fetcher",
+        metric_name="consumer_retry_count",
+        metric_value=1,
+        dimensions={"source_id": "vnexpress", "empty": None},
+    )
+
+    assert event.schema_version == "pipeline.metric_observed.v1"
+    assert event.service == "article_fetcher"
+    assert event.metric_name == "consumer_retry_count"
+    assert event.metric_value == 1
+    assert event.dimensions == {"source_id": "vnexpress"}
+
+
 def test_schema_id_cache_refreshes_after_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, str]] = []
     clock = iter([0.0, 100.0, 301.0, 301.0])
@@ -306,7 +329,7 @@ class FakePublisher:
     def publish(self, topic_key: str, event: object) -> None:
         self.events.append((topic_key, event))
 
-    def flush(self) -> None:
+    def flush(self, timeout_seconds: float = 10.0) -> None:
         self.flushed = True
 
 

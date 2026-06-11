@@ -17,6 +17,7 @@ from news_service_common.events import (
     JsonEventConsumer,
     JsonEventPublisher,
 )
+from news_service_common.metrics import publish_pipeline_metric_safely
 from news_service_common.runtime import (
     ConsumedRetryBackoff,
     ShutdownSignal,
@@ -50,6 +51,7 @@ def run() -> int:
         config = run_stage("config_load", False, load_settings)
         sources = run_stage("config_load", False, lambda: load_sources(settings=config))
         publisher = run_stage("event_bus_connect", True, lambda: JsonEventPublisher(config))
+        metric_publisher = run_stage("event_bus_connect", True, lambda: JsonEventPublisher(config))
         consumer = run_stage(
             "event_bus_connect",
             True,
@@ -81,6 +83,7 @@ def run() -> int:
                 consumer,
                 object_store,
                 retry_backoff,
+                metric_publisher,
                 shutdown,
             )
             exit_code = should_stop_after_process(result, once=args.once)
@@ -100,6 +103,7 @@ def process_one(
     consumer: JsonEventConsumer,
     object_store: S3PayloadStore,
     retry_backoff: ConsumedRetryBackoff,
+    metric_publisher: JsonEventPublisher,
     shutdown: ShutdownSignal,
 ) -> int:
     started_at = time.perf_counter()
@@ -128,6 +132,28 @@ def process_one(
         )
         retry = config["crawl"]["retry"]
         article_policy = source["article"]
+
+        def on_http_retry(**fields: Any) -> None:
+            log_event(
+                SERVICE_NAME,
+                "article_fetch_retry",
+                level="warning",
+                source_id=event.source_id,
+                article_id=event.article_id,
+                **fields,
+            )
+            publish_pipeline_metric_safely(
+                service_name=SERVICE_NAME,
+                publisher=metric_publisher,
+                metric_name="article_fetch_retry_count",
+                dimensions={
+                    "source_id": event.source_id,
+                    "stage": "article_fetch",
+                    "error_class": fields.get("error_class"),
+                    "status_code": fields.get("status_code"),
+                },
+            )
+
         fetcher = ArticleFetcher(
             http_client=ArticleHttpClient(
                 user_agent=config["crawl"]["user_agents"][source["crawl"]["user_agent_policy"]],
@@ -141,14 +167,7 @@ def process_one(
                 ),
                 blocked_status_codes=article_policy.get("blocked_status_codes", []),
                 invalid_document_markers=article_policy.get("invalid_document_markers", []),
-                on_retry=lambda **fields: log_event(
-                    SERVICE_NAME,
-                    "article_fetch_retry",
-                    level="warning",
-                    source_id=event.source_id,
-                    article_id=event.article_id,
-                    **fields,
-                ),
+                on_retry=on_http_retry,
             ),
             object_store=object_store,
             publisher=publisher,
@@ -187,6 +206,7 @@ def process_one(
             error=error,
             started_at=started_at,
             retry_backoff=retry_backoff,
+            metric_publisher=metric_publisher,
             shutdown=shutdown,
         )
 
