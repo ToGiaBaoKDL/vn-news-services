@@ -43,3 +43,5 @@ class ArticleExtractOutcome:
     block_count: int
     image_count: int
     content_hash: str
+    inline_event_bytes: int
+    extracted_payload_uri: str | None = None

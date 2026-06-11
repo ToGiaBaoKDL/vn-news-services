@@ -10,6 +10,8 @@ from news_platform.contracts.events import ArticleFetchRequested, FeedItemDiscov
 from news_service_common.errors import IngestionError
 from news_service_common.events import (
     ConsumedEvent,
+    JsonEventConsumer,
+    UnexpectedSchemaIdError,
     decode_schema_registry_json,
     event_message_key,
     make_dlq_event,
@@ -39,8 +41,27 @@ def test_decode_schema_registry_json_accepts_expected_schema_id() -> None:
 def test_decode_schema_registry_json_rejects_unexpected_schema_id() -> None:
     payload = b"\x00\x00\x00\x00\x03" + json.dumps({"hello": "world"}).encode()
 
-    with pytest.raises(ValueError, match="Unexpected Schema Registry schema id 3"):
+    with pytest.raises(UnexpectedSchemaIdError, match="Unexpected Schema Registry schema id 3"):
         decode_schema_registry_json(payload, expected_schema_ids=frozenset({2}))
+
+
+def test_consumed_event_refreshes_schema_ids_after_unknown_schema() -> None:
+    payload = b"\x00\x00\x00\x00\x03" + json.dumps({"hello": "world"}).encode()
+    refreshes = 0
+
+    def refresh() -> frozenset[int]:
+        nonlocal refreshes
+        refreshes += 1
+        return frozenset({2, 3})
+
+    consumed = ConsumedEvent(
+        message=FakeMessage(payload),
+        expected_schema_ids_loader=lambda: frozenset({2}),
+        expected_schema_ids_refresher=refresh,
+    )
+
+    assert consumed.decode_value() == {"hello": "world"}
+    assert refreshes == 1
 
 
 def test_decode_schema_registry_json_rejects_zero_schema_id() -> None:
@@ -233,6 +254,31 @@ def test_make_dlq_event_is_stable_for_same_source_message() -> None:
 
     assert first.event_id == second.event_id
     assert first.schema_version == "news.dlq.v1"
+
+
+def test_schema_id_cache_refreshes_after_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str]] = []
+    clock = iter([0.0, 100.0, 301.0, 301.0])
+    consumer = JsonEventConsumer.__new__(JsonEventConsumer)
+    consumer.schema_registry_url = "http://redpanda:8081"
+    consumer.schema_id_cache_ttl_seconds = 300
+    consumer.schema_ids_by_subject = {}
+
+    monkeypatch.setattr("news_service_common.events.time.monotonic", lambda: next(clock))
+
+    def fake_fetch(registry_url: str, subject: str) -> frozenset[int]:
+        calls.append((registry_url, subject))
+        return frozenset({len(calls)})
+
+    monkeypatch.setattr("news_service_common.events.fetch_subject_schema_ids", fake_fetch)
+
+    assert consumer.schema_ids_for_subject("topic-value") == frozenset({1})
+    assert consumer.schema_ids_for_subject("topic-value") == frozenset({1})
+    assert consumer.schema_ids_for_subject("topic-value") == frozenset({2})
+    assert calls == [
+        ("http://redpanda:8081", "topic-value"),
+        ("http://redpanda:8081", "topic-value"),
+    ]
 
 
 class FakeMessage:

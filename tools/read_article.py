@@ -132,6 +132,8 @@ def record_summary(record: dict[str, Any]) -> dict[str, Any]:
         "source_payload_uri",
         "content_hash",
         "payload_uri",
+        "extracted_payload_uri",
+        "extracted_payload_hash",
         "extractor_version",
     )
     summary = {
@@ -148,12 +150,12 @@ def record_summary(record: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
-def fetched_html(
+def compressed_payload(
     *,
     payload_uri: str,
     storage_host: str,
     storage_container: str,
-) -> str:
+) -> bytes:
     python_code = (
         "import os,sys;"
         "from news_service_common.storage import S3PayloadStore;"
@@ -176,13 +178,52 @@ def fetched_html(
         check=True,
         capture_output=True,
     )
-    return result.stdout.decode("utf-8", errors="replace")
+    return result.stdout
+
+
+def fetched_html(
+    *,
+    payload_uri: str,
+    storage_host: str,
+    storage_container: str,
+) -> str:
+    return compressed_payload(
+        payload_uri=payload_uri,
+        storage_host=storage_host,
+        storage_container=storage_container,
+    ).decode("utf-8", errors="replace")
+
+
+def extracted_body_text(
+    *,
+    payload_uri: str,
+    storage_host: str,
+    storage_container: str,
+) -> str:
+    payload = compressed_payload(
+        payload_uri=payload_uri,
+        storage_host=storage_host,
+        storage_container=storage_container,
+    )
+    value = json.loads(payload)
+    if not isinstance(value, dict):
+        raise ValueError(f"Expected extracted payload object at {payload_uri}")
+    body_text = value.get("body_text")
+    if not isinstance(body_text, str):
+        raise ValueError(f"Expected body_text in extracted payload at {payload_uri}")
+    return body_text
 
 
 def content_for_record(record: dict[str, Any], args: argparse.Namespace) -> str:
     event = record["event"]
     if record["stage"] == "extracted":
-        return event["body_text"]
+        if event.get("body_text"):
+            return event["body_text"]
+        return extracted_body_text(
+            payload_uri=event["extracted_payload_uri"],
+            storage_host=args.storage_host,
+            storage_container=args.storage_container,
+        )
     return fetched_html(
         payload_uri=event["payload_uri"],
         storage_host=args.storage_host,

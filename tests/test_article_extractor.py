@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, date, datetime
 
 import pytest
 from news_platform.contracts.events import ArticleFetched
+from news_platform.storage import StorageLayout
 
 from news_article_extractor.parser import extract_article
 from news_article_extractor.service import ArticleExtractor
@@ -85,9 +87,16 @@ SOURCE_EXTRACTION_FIXTURES = {
 class FakeObjectStore:
     def __init__(self, payload: bytes = HTML) -> None:
         self.payload = payload
+        self.objects: dict[str, tuple[bytes, str]] = {}
 
     def read_compressed(self, uri: str) -> bytes:
         return self.payload
+
+    def exists(self, uri: str) -> bool:
+        return uri in self.objects
+
+    def write_compressed(self, uri: str, payload: bytes, *, content_type: str) -> None:
+        self.objects[uri] = (payload, content_type)
 
 
 class FakePublisher:
@@ -99,6 +108,17 @@ class FakePublisher:
 
     def flush(self) -> None:
         return None
+
+
+def storage_layout() -> StorageLayout:
+    return StorageLayout(
+        buckets={
+            "landing": "tgb-prod-landing-a7k3p9",
+            "curated": "tgb-prod-curated-m4q8x2",
+            "analytics": "tgb-prod-analytics-r9v2c6",
+        },
+        payload_prefix="payloads",
+    )
 
 
 def test_extract_article_from_html() -> None:
@@ -276,6 +296,7 @@ def test_article_extractor_publishes_extracted_event() -> None:
     extractor = ArticleExtractor(
         object_store=FakeObjectStore(),
         publisher=publisher,
+        storage_layout=storage_layout(),
     )
 
     outcome = extractor.extract(
@@ -300,6 +321,44 @@ def test_article_extractor_publishes_extracted_event() -> None:
     assert event.extraction_status == "success"
 
 
+def test_article_extractor_stores_oversized_extracted_payload() -> None:
+    body = "".join(
+        f"<p>Day la doan noi dung dai thu {index} voi thong tin phuc vu truy xuat.</p>"
+        for index in range(20)
+    )
+    html = HTML.replace(
+        b"<p>Day la doan noi dung dau tien cua bai viet kinh doanh.</p>\n"
+        b"    <p>Day la doan noi dung thu hai voi them thong tin chi tiet.</p>",
+        body.encode(),
+    )
+    object_store = FakeObjectStore(html)
+    publisher = FakePublisher()
+    extractor = ArticleExtractor(
+        object_store=object_store,
+        publisher=publisher,
+        storage_layout=storage_layout(),
+        max_inline_event_bytes=1300,
+    )
+
+    outcome = extractor.extract(fetched_event(html))
+
+    event = publisher.events[0][1]
+    assert outcome.extracted_payload_uri == event.extracted_payload_uri
+    assert event.body_text == ""
+    assert event.content_blocks == []
+    assert event.images == []
+    assert event.extracted_payload_uri is not None
+    assert event.extracted_payload_hash is not None
+    assert f"extracted_payload_hash={event.extracted_payload_hash}" in event.extracted_payload_uri
+    payload, content_type = object_store.objects[event.extracted_payload_uri]
+    payload_json = json.loads(payload)
+    assert content_type == "application/vnd.vn-news.article-extracted+json"
+    assert len(payload) > outcome.inline_event_bytes
+    assert payload_json["body_text"].startswith("Day la doan noi dung dai thu 0")
+    assert len(payload_json["content_blocks"]) == 20
+    assert hashlib.sha256(payload).hexdigest() == event.extracted_payload_hash
+
+
 def test_article_extractor_resolves_relative_canonical_url() -> None:
     html = HTML.replace(
         b'<link rel="canonical" href="https://vnexpress.net/a.html">',
@@ -309,6 +368,7 @@ def test_article_extractor_resolves_relative_canonical_url() -> None:
     extractor = ArticleExtractor(
         object_store=FakeObjectStore(html),
         publisher=publisher,
+        storage_layout=storage_layout(),
         source={
             "article": {
                 "extractor": "html_article",
@@ -328,6 +388,7 @@ def test_article_extractor_event_id_changes_for_new_source_document() -> None:
     extractor = ArticleExtractor(
         object_store=FakeObjectStore(),
         publisher=publisher,
+        storage_layout=storage_layout(),
     )
 
     extractor.extract(
@@ -351,6 +412,7 @@ def test_article_extractor_requires_canonical_url_when_configured() -> None:
     extractor = ArticleExtractor(
         object_store=FakeObjectStore(html),
         publisher=FakePublisher(),
+        storage_layout=storage_layout(),
         source={
             "article": {
                 "extractor": "html_article",
@@ -372,6 +434,7 @@ def test_article_extractor_rejects_missing_body() -> None:
     extractor = ArticleExtractor(
         object_store=FakeObjectStore(html),
         publisher=FakePublisher(),
+        storage_layout=storage_layout(),
     )
 
     with pytest.raises(IngestionError) as raised:
@@ -427,6 +490,7 @@ def test_article_extractor_rejects_payload_hash_mismatch() -> None:
     extractor = ArticleExtractor(
         object_store=FakeObjectStore(b"<html>unexpected</html>"),
         publisher=FakePublisher(),
+        storage_layout=storage_layout(),
     )
 
     with pytest.raises(IngestionError) as raised:
@@ -438,7 +502,11 @@ def test_article_extractor_rejects_payload_hash_mismatch() -> None:
 
 def test_article_extractor_rejects_failed_fetch_event() -> None:
     event = fetched_event().model_copy(update={"fetch_status": "failed", "payload_uri": None})
-    extractor = ArticleExtractor(object_store=FakeObjectStore(), publisher=FakePublisher())
+    extractor = ArticleExtractor(
+        object_store=FakeObjectStore(),
+        publisher=FakePublisher(),
+        storage_layout=storage_layout(),
+    )
 
     with pytest.raises(IngestionError) as raised:
         extractor.extract(event)

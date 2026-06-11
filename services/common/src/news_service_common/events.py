@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -29,10 +30,21 @@ from news_service_common.errors import IngestionError
 
 
 @dataclass(frozen=True)
+class CachedSchemaIds:
+    ids: frozenset[int]
+    loaded_at: float
+
+
+class UnexpectedSchemaIdError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
 class ConsumedEvent:
     message: Message
     expected_schema_ids: frozenset[int] | None = None
     expected_schema_ids_loader: Callable[[], frozenset[int]] | None = None
+    expected_schema_ids_refresher: Callable[[], frozenset[int]] | None = None
 
     @property
     def topic(self) -> str:
@@ -47,10 +59,19 @@ class ConsumedEvent:
         return self.message.offset()
 
     def decode_value(self) -> dict[str, Any]:
-        return decode_schema_registry_json(
-            self.message.value(),
-            expected_schema_ids=self.resolve_expected_schema_ids(),
-        )
+        expected_schema_ids = self.resolve_expected_schema_ids()
+        try:
+            return decode_schema_registry_json(
+                self.message.value(),
+                expected_schema_ids=expected_schema_ids,
+            )
+        except UnexpectedSchemaIdError:
+            if not self.expected_schema_ids_refresher:
+                raise
+            return decode_schema_registry_json(
+                self.message.value(),
+                expected_schema_ids=self.expected_schema_ids_refresher(),
+            )
 
     def payload_for_dlq(self) -> dict[str, Any]:
         payload = self.message.value()
@@ -127,7 +148,10 @@ class JsonEventConsumer:
         self.config = config
         self.subscribed_topic: str | None = None
         self.schema_registry_url = config["event_bus"]["schema_registry_url"].rstrip("/")
-        self.schema_ids_by_subject: dict[str, frozenset[int]] = {}
+        self.schema_id_cache_ttl_seconds = float(
+            config["event_bus"].get("schema_id_cache_ttl_seconds", 300)
+        )
+        self.schema_ids_by_subject: dict[str, CachedSchemaIds] = {}
         self.consumer = Consumer(
             {
                 "bootstrap.servers": config["event_bus"]["bootstrap_servers"],
@@ -151,6 +175,10 @@ class JsonEventConsumer:
         return ConsumedEvent(
             message=message,
             expected_schema_ids_loader=lambda: self.schema_ids_for_subject(subject),
+            expected_schema_ids_refresher=lambda: self.schema_ids_for_subject(
+                subject,
+                refresh=True,
+            ),
         )
 
     def commit(self, event: ConsumedEvent) -> None:
@@ -162,13 +190,21 @@ class JsonEventConsumer:
     def close(self) -> None:
         self.consumer.close()
 
-    def schema_ids_for_subject(self, subject: str) -> frozenset[int]:
-        if subject not in self.schema_ids_by_subject:
-            self.schema_ids_by_subject[subject] = fetch_subject_schema_ids(
-                self.schema_registry_url,
-                subject,
+    def schema_ids_for_subject(self, subject: str, *, refresh: bool = False) -> frozenset[int]:
+        cached = self.schema_ids_by_subject.get(subject)
+        if (
+            refresh
+            or cached is None
+            or (time.monotonic() - cached.loaded_at) >= self.schema_id_cache_ttl_seconds
+        ):
+            self.schema_ids_by_subject[subject] = CachedSchemaIds(
+                ids=fetch_subject_schema_ids(
+                    self.schema_registry_url,
+                    subject,
+                ),
+                loaded_at=time.monotonic(),
             )
-        return self.schema_ids_by_subject[subject]
+        return self.schema_ids_by_subject[subject].ids
 
 
 def fetch_subject_schema_ids(registry_url: str, subject: str) -> frozenset[int]:
@@ -217,7 +253,7 @@ def decode_schema_registry_json(
     if schema_id <= 0:
         raise ValueError("Expected positive Schema Registry schema id")
     if expected_schema_ids is not None and schema_id not in expected_schema_ids:
-        raise ValueError(
+        raise UnexpectedSchemaIdError(
             f"Unexpected Schema Registry schema id {schema_id}; "
             f"expected one of {sorted(expected_schema_ids)}"
         )
@@ -226,6 +262,15 @@ def decode_schema_registry_json(
     if not isinstance(value, dict):
         raise ValueError("Expected decoded event payload to be a JSON object")
     return value
+
+
+def event_json_bytes(event: BaseEvent) -> bytes:
+    return json.dumps(
+        event.model_dump(mode="json"),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
 
 
 def event_message_key(topic_key: str, event: BaseEvent) -> str:

@@ -7,8 +7,9 @@ from typing import Any
 
 from news_platform.config import load_settings, load_sources
 from news_platform.contracts.events import ArticleFetched
+from news_platform.storage import StorageLayout
 
-from news_article_extractor.service import ArticleExtractor
+from news_article_extractor.service import ArticleExtractor, article_extracted_max_bytes
 from news_service_common.config import select_enabled_source
 from news_service_common.events import (
     ConsumedEvent,
@@ -125,6 +126,8 @@ def process_one(
         extractor = ArticleExtractor(
             object_store=object_store,
             publisher=publisher,
+            storage_layout=StorageLayout.from_config(config),
+            max_inline_event_bytes=article_extracted_max_bytes(config),
             source=source,
         )
         outcome = extractor.extract(event)

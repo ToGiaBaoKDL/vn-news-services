@@ -11,13 +11,18 @@ from news_platform.contracts.events import (
     ArticleTextBlock,
 )
 from news_platform.ids import make_stable_id, normalize_article_url
+from news_platform.storage import StorageLayout
 
 from news_article_extractor.models import ArticleExtractOutcome
 from news_article_extractor.parser import extract_article
 from news_service_common.errors import IngestionError
-from news_service_common.events import JsonEventPublisher
+from news_service_common.events import JsonEventPublisher, event_json_bytes
 from news_service_common.stages import run_stage
 from news_service_common.storage import S3PayloadStore
+
+DEFAULT_ARTICLE_EXTRACTED_MAX_BYTES = 524288
+EXTRACTED_PAYLOAD_CONTENT_TYPE = "application/vnd.vn-news.article-extracted+json"
+SCHEMA_REGISTRY_FRAME_BYTES = 5
 
 
 class ArticleExtractor:
@@ -26,10 +31,14 @@ class ArticleExtractor:
         *,
         object_store: S3PayloadStore,
         publisher: JsonEventPublisher,
+        storage_layout: StorageLayout,
+        max_inline_event_bytes: int = DEFAULT_ARTICLE_EXTRACTED_MAX_BYTES,
         source: dict | None = None,
     ) -> None:
         self.object_store = object_store
         self.publisher = publisher
+        self.storage_layout = storage_layout
+        self.max_inline_event_bytes = max_inline_event_bytes
         self.source = source or {}
 
     def extract(
@@ -99,7 +108,7 @@ class ArticleExtractor:
             fallback_url=str(event.requested_url),
         )
         content_hash = hashlib.sha256(article.body_text.encode()).hexdigest()
-        extracted_event = run_stage(
+        full_event = run_stage(
             "article_extract",
             False,
             lambda: ArticleExtracted(
@@ -147,6 +156,7 @@ class ArticleExtractor:
                 extraction_status="success",
             ),
         )
+        extracted_event, inline_event_bytes = self._bounded_extracted_event(full_event)
         run_stage(
             "event_publish",
             True,
@@ -162,7 +172,72 @@ class ArticleExtractor:
             block_count=len(article.content_blocks),
             image_count=len(article.images),
             content_hash=content_hash,
+            inline_event_bytes=inline_event_bytes,
+            extracted_payload_uri=extracted_event.extracted_payload_uri,
         )
+
+    def _bounded_extracted_event(self, event: ArticleExtracted) -> tuple[ArticleExtracted, int]:
+        inline_bytes = event_json_bytes(event)
+        inline_wire_bytes = event_wire_bytes(inline_bytes)
+        if inline_wire_bytes <= self.max_inline_event_bytes:
+            return event, inline_wire_bytes
+
+        payload_hash = hashlib.sha256(inline_bytes).hexdigest()
+        payload_uri = self.storage_layout.extracted_payload_uri(
+            event.source_id,
+            event.ingest_date,
+            event.article_id,
+            event.source_document_id,
+            payload_hash,
+        )
+        payload_exists = run_stage(
+            "payload_write",
+            True,
+            lambda: self.object_store.exists(payload_uri),
+        )
+        if not payload_exists:
+            run_stage(
+                "payload_write",
+                True,
+                lambda: self.object_store.write_compressed(
+                    payload_uri,
+                    inline_bytes,
+                    content_type=EXTRACTED_PAYLOAD_CONTENT_TYPE,
+                ),
+            )
+
+        slim_event = event.model_copy(
+            update={
+                "body_text": "",
+                "content_blocks": [],
+                "images": [],
+                "extracted_payload_uri": payload_uri,
+                "extracted_payload_hash": payload_hash,
+            },
+        )
+        slim_wire_bytes = event_wire_bytes(event_json_bytes(slim_event))
+        if slim_wire_bytes > self.max_inline_event_bytes:
+            raise IngestionError(
+                stage="article_extract",
+                retryable=False,
+                message=(
+                    "Slim extracted event exceeds configured inline limit: "
+                    f"{slim_wire_bytes} > {self.max_inline_event_bytes}"
+                ),
+            )
+        return slim_event, slim_wire_bytes
+
+
+def article_extracted_max_bytes(config: dict) -> int:
+    return int(
+        config.get("event_bus", {})
+        .get("inline_event_limits", {})
+        .get("article_extracted_max_bytes", DEFAULT_ARTICLE_EXTRACTED_MAX_BYTES)
+    )
+
+
+def event_wire_bytes(json_payload: bytes) -> int:
+    return len(json_payload) + SCHEMA_REGISTRY_FRAME_BYTES
 
 
 def resolved_article_url(candidate_url: str | None, *, fallback_url: str) -> str:
