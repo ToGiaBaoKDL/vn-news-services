@@ -154,6 +154,70 @@ def test_extract_article_collects_article_images() -> None:
     assert article.images[0].ordinal == 0
 
 
+def test_extract_article_preserves_inline_suggested_link_text() -> None:
+    html = b"""<!doctype html>
+<html>
+  <head>
+    <link rel="canonical" href="https://thanhnien.vn/a.html">
+    <meta property="og:title" content="Tin thoi su">
+  </head>
+  <body>
+    <article class="detail-content">
+      <p>
+        Day la doan noi dung co
+        <a class="seo-suggest-link link-inline-content" href="/tag.html">tu khoa quan trong</a>
+        trong cau.
+      </p>
+      <a class="link-inline-content" href="/related.html">
+        <img src="https://cdn.example.test/related.jpg" alt="Tin goi y" />
+      </a>
+      <div class="link-inline-content"><p>BOILERPLATE_TIN_GOI_Y.</p></div>
+      <p>Day la doan noi dung thu hai voi thong tin bo sung cho bai viet.</p>
+    </article>
+  </body>
+</html>
+"""
+
+    article = extract_article(
+        html,
+        fallback_url="https://thanhnien.vn/a.html",
+        extraction_config={"exclude_selectors": [".seo-suggest-link", ".link-inline-content"]},
+    )
+
+    assert "tu khoa quan trong" in article.body_text
+    assert "BOILERPLATE_TIN_GOI_Y" not in article.body_text
+    assert article.images == []
+
+
+def test_extract_article_drops_recommendation_link_blocks() -> None:
+    html = b"""<!doctype html>
+<html>
+  <head>
+    <link rel="canonical" href="https://vnexpress.net/a.html">
+    <meta property="og:title" content="Tin thu gian">
+  </head>
+  <body>
+    <article class="fck_detail">
+      <p>Day la doan noi dung chinh cua bai viet voi thong tin du dai.</p>
+      <p>&gt;&gt; Cau chuyen goi y khac khong thuoc noi dung bai viet</p>
+      <p>Xem them nhieu video va chuyen la khac tai day</p>
+      <p>Day la doan noi dung tiep theo cua bai viet can duoc giu lai.</p>
+    </article>
+  </body>
+</html>
+"""
+
+    article = extract_article(
+        html,
+        fallback_url="https://vnexpress.net/a.html",
+    )
+
+    assert "doan noi dung chinh" in article.body_text
+    assert "doan noi dung tiep theo" in article.body_text
+    assert "Cau chuyen goi y" not in article.body_text
+    assert "Xem them nhieu video" not in article.body_text
+
+
 def test_extract_article_uses_og_url_as_canonical_fallback() -> None:
     html = HTML.replace(
         b'<link rel="canonical" href="https://vnexpress.net/a.html">',

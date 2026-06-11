@@ -56,12 +56,18 @@ DEFAULT_EXCLUDE_SELECTORS = [
     ".detail-tag",
 ]
 
+DEFAULT_UNWRAP_SELECTORS = [
+    "a.link-inline-content",
+    "a.seo-suggest-link",
+]
+
 BLOCK_TAGS = {"p", "h2", "h3", "li", "blockquote", "figcaption"}
 HEADING_TAGS = {"h2", "h3"}
 BOILERPLATE_PATTERNS = [
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
-        r"^\s*(tin liên quan|xem thêm|đọc tiếp)\s*$",
+        r"^\s*>>\s*",
+        r"^\s*(tin liên quan|tin lien quan|xem thêm|xem them|đọc tiếp|doc tiep)\b",
         r"^\s*(theo dõi|bấm theo dõi|mời bạn đọc)\b",
         r"^\s*(nguồn|source)\s*:",
         r"^\s*chia sẻ\s*$",
@@ -292,10 +298,20 @@ def valid_caption(value: str) -> bool:
 
 
 def remove_unwanted_nodes(soup: BeautifulSoup, config: dict[str, Any]) -> None:
+    unwrap_selectors = [*DEFAULT_UNWRAP_SELECTORS, *string_list(config.get("unwrap_selectors"))]
+    for selector in unwrap_selectors:
+        for node in soup.select(selector):
+            if should_unwrap_node(node):
+                node.unwrap()
+
     selectors = [*DEFAULT_EXCLUDE_SELECTORS, *string_list(config.get("exclude_selectors"))]
     for selector in selectors:
         for node in soup.select(selector):
             node.decompose()
+
+
+def should_unwrap_node(node: Tag) -> bool:
+    return node.find(["img", "picture", "video", "iframe"]) is None
 
 
 def select_containers(soup: BeautifulSoup, config: dict[str, Any]) -> list[Tag]:
