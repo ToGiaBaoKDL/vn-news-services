@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import time
+import warnings
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -31,6 +32,13 @@ METRIC_NAME_MAP = {
     "article_fetch_retry_count": "ArticleFetchRetryCount",
     "consumer_retry_count": "ConsumerRetryCount",
 }
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"The 'strict' parameter is no longer needed on Python 3\+.*",
+    category=FutureWarning,
+    module=r"urllib3\.poolmanager",
+)
 
 
 @dataclass(frozen=True)
