@@ -51,11 +51,6 @@ SOURCE_EXTRACTION_FIXTURES = {
         "content_selectors": ["#ContentDetail", ".knc-content.detail-content"],
         "exclude_selectors": [".link-source-detail"],
     },
-    "kenh14": {
-        "domain": "kenh14.vn",
-        "content_selectors": [".detail-content.afcbc-body", ".detail-content"],
-        "exclude_selectors": [".knc-relate-wrapper"],
-    },
     "thanhnien": {
         "domain": "thanhnien.vn",
         "content_selectors": [".detail-content.afcbc-body", ".detail-content"],
@@ -260,7 +255,6 @@ def test_extract_article_uses_og_url_as_canonical_fallback() -> None:
         ("cafef", "cafef.vn", "twitter:title", "og:url"),
         ("dantri", "dantri.com.vn", "og:title", "link"),
         ("genk", "genk.vn", "twitter:title", "link"),
-        ("kenh14", "kenh14.vn", "og:title", "og:url"),
         ("thanhnien", "thanhnien.vn", "twitter:title", "link"),
         ("tienphong", "tienphong.vn", "og:title", "link"),
         ("tuoitre", "tuoitre.vn", "og:title", "og:url"),
@@ -452,7 +446,6 @@ def test_article_extractor_rejects_missing_body() -> None:
         "cafef",
         "dantri",
         "genk",
-        "kenh14",
         "thanhnien",
         "tienphong",
         "tuoitre",
@@ -602,13 +595,6 @@ def source_layout_fixture(source_id: str) -> bytes:
             <p>NOI_DUNG_CHINH_genk doan mot du dai de kiem tra trich xuat day du.</p>
             <p>NOI_DUNG_CHINH_genk doan hai giu dung thu tu ngu nghia on dinh.</p>
             <div class="link-source-detail"><p>BOILERPLATE_genk nguon bai viet.</p></div>
-          </div>
-        """,
-        "kenh14": """
-          <div class="detail-content afcbc-body">
-            <p>NOI_DUNG_CHINH_kenh14 doan mot du dai de kiem tra trich xuat.</p>
-            <p>NOI_DUNG_CHINH_kenh14 doan hai giu dung thu tu ngu nghia.</p>
-            <div class="knc-relate-wrapper"><p>BOILERPLATE_kenh14 tin lien quan.</p></div>
           </div>
         """,
         "thanhnien": """
