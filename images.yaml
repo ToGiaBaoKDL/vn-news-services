@@ -4,9 +4,19 @@ platforms:
   - linux/amd64
   - linux/arm64
 
+change_paths:
+  - .github/workflows/publish-images.yaml
+  - .dockerignore
+  - images.yaml
+  - pyproject.toml
+  - services/common/**
+  - uv.lock
+
 images:
   service_feed_ingestor:
     image_repository: vn-news-feed-ingestor
+    change_paths:
+      - services/feed_ingestor/**
     build:
       context: vn-news-services
       dockerfile: services/feed_ingestor/Dockerfile
@@ -15,6 +25,8 @@ images:
 
   service_article_fetcher:
     image_repository: vn-news-article-fetcher
+    change_paths:
+      - services/article_fetcher/**
     build:
       context: vn-news-services
       dockerfile: services/article_fetcher/Dockerfile
@@ -23,6 +35,8 @@ images:
 
   service_article_extractor:
     image_repository: vn-news-article-extractor
+    change_paths:
+      - services/article_extractor/**
     build:
       context: vn-news-services
       dockerfile: services/article_extractor/Dockerfile
@@ -31,6 +45,8 @@ images:
 
   service_pipeline_metrics:
     image_repository: vn-news-pipeline-metrics
+    change_paths:
+      - services/pipeline_metrics/**
     build:
       context: vn-news-services
       dockerfile: services/pipeline_metrics/Dockerfile
@@ -39,6 +55,8 @@ images:
 
   service_dlq_operator:
     image_repository: vn-news-dlq-operator
+    change_paths:
+      - services/dlq_operator/**
     build:
       context: vn-news-services
       dockerfile: services/dlq_operator/Dockerfile

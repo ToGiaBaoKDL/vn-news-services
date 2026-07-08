@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/publish-images.yaml"
+      - ".dockerignore"
       - "images.yaml"
       - "pyproject.toml"
       - "services/**"
@@ -29,6 +30,7 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           path: vn-news-services
+          fetch-depth: 0
 
       - name: Check out platform library
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -53,16 +55,41 @@ jobs:
           python-version: "3.12"
           working-directory: vn-news-cicd
 
+      - name: Resolve changed images
+        id: images
+        working-directory: vn-news-cicd
+        run: |
+          set -euo pipefail
+          uv sync --frozen --no-dev
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ github.event.before }}" == "0000000000000000000000000000000000000000" ]]; then
+            image_output="$(uv run --no-dev python -m scripts.images.changed \
+              --catalog ../vn-news-services/images.yaml \
+              --build-all \
+              --format shell)"
+          else
+            image_output="$(uv run --no-dev python -m scripts.images.changed \
+              --catalog ../vn-news-services/images.yaml \
+              --repo-root ../vn-news-services \
+              --base-ref "${{ github.event.before }}" \
+              --head-ref "${{ github.sha }}" \
+              --format shell)"
+          fi
+          printf '%s\n' "$image_output" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$image_output"
+
       - name: Set up Docker Buildx
+        if: steps.images.outputs.has_changes == 'true'
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
 
       - name: Log in to Docker Hub
+        if: steps.images.outputs.has_changes == 'true'
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Resolve image tag
+        if: steps.images.outputs.has_changes == 'true'
         id: image
         working-directory: vn-news-services
         run: |
@@ -72,6 +99,7 @@ jobs:
           echo "tag=sha-${services_ref}-${platform_lib_ref}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push images
+        if: steps.images.outputs.has_changes == 'true'
         working-directory: vn-news-cicd
         env:
           IMAGE_TAG: ${{ steps.image.outputs.tag }}
@@ -80,9 +108,28 @@ jobs:
         run: |
           set -euo pipefail
           : "${VN_NEWS_IMAGE_NAMESPACE:?Set VN_NEWS_IMAGE_NAMESPACE or DOCKERHUB_USERNAME}"
-          uv sync --frozen --no-dev
           uv run --no-dev python -m scripts.images.build \
             --catalog ../vn-news-services/images.yaml \
             --workspace-root .. \
+            ${{ steps.images.outputs.image_args }} \
             --tag "$IMAGE_TAG" \
             --push
+
+      - name: Resolve image digest manifest
+        if: steps.images.outputs.has_changes == 'true'
+        working-directory: vn-news-cicd
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          VN_NEWS_IMAGE_REGISTRY: docker.io
+          VN_NEWS_IMAGE_NAMESPACE: ${{ vars.VN_NEWS_IMAGE_NAMESPACE || secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -euo pipefail
+          image_manifest="$(uv run --no-dev python -m scripts.images.digests \
+            --catalog ../vn-news-services/images.yaml \
+            ${{ steps.images.outputs.image_args }} \
+            --tag "$IMAGE_TAG")"
+          printf '### Image digest manifest\n\n```json\n%s\n```\n' "$image_manifest" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report skipped publish
+        if: steps.images.outputs.has_changes != 'true'
+        run: echo "No service image changes detected."
