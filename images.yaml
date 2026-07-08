@@ -1,0 +1,46 @@
+version: 1
+owner: vn-news-services
+platforms:
+  - linux/amd64
+  - linux/arm64
+
+images:
+  service_feed_ingestor:
+    image_repository: vn-news-feed-ingestor
+    build:
+      context: vn-news-services
+      dockerfile: services/feed_ingestor/Dockerfile
+      additional_contexts:
+        vn-news-platform-lib: vn-news-platform-lib
+
+  service_article_fetcher:
+    image_repository: vn-news-article-fetcher
+    build:
+      context: vn-news-services
+      dockerfile: services/article_fetcher/Dockerfile
+      additional_contexts:
+        vn-news-platform-lib: vn-news-platform-lib
+
+  service_article_extractor:
+    image_repository: vn-news-article-extractor
+    build:
+      context: vn-news-services
+      dockerfile: services/article_extractor/Dockerfile
+      additional_contexts:
+        vn-news-platform-lib: vn-news-platform-lib
+
+  service_pipeline_metrics:
+    image_repository: vn-news-pipeline-metrics
+    build:
+      context: vn-news-services
+      dockerfile: services/pipeline_metrics/Dockerfile
+      additional_contexts:
+        vn-news-platform-lib: vn-news-platform-lib
+
+  service_dlq_operator:
+    image_repository: vn-news-dlq-operator
+    build:
+      context: vn-news-services
+      dockerfile: services/dlq_operator/Dockerfile
+      additional_contexts:
+        vn-news-platform-lib: vn-news-platform-lib
