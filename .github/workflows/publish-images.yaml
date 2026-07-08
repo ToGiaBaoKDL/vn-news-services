@@ -22,7 +22,6 @@ permissions:
 
 jobs:
   publish:
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.VN_NEWS_ENABLE_IMAGE_PUBLISH == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
