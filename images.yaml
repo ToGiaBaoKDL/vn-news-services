@@ -5,7 +5,6 @@ platforms:
   - linux/arm64
 
 change_paths:
-  - .github/workflows/publish-images.yaml
   - .dockerignore
   - images.yaml
   - pyproject.toml
