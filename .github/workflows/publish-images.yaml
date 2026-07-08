@@ -88,7 +88,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Resolve image tag
+      - name: Resolve publish image tag
         if: steps.images.outputs.has_changes == 'true'
         id: image
         working-directory: vn-news-services
@@ -102,7 +102,7 @@ jobs:
         if: steps.images.outputs.has_changes == 'true'
         working-directory: vn-news-cicd
         env:
-          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          PUBLISH_IMAGE_TAG: ${{ steps.image.outputs.tag }}
           VN_NEWS_IMAGE_REGISTRY: docker.io
           VN_NEWS_IMAGE_NAMESPACE: ${{ vars.VN_NEWS_IMAGE_NAMESPACE || secrets.DOCKERHUB_USERNAME }}
         run: |
@@ -112,14 +112,14 @@ jobs:
             --catalog ../vn-news-services/images.yaml \
             --workspace-root .. \
             ${{ steps.images.outputs.image_args }} \
-            --tag "$IMAGE_TAG" \
+            --tag "$PUBLISH_IMAGE_TAG" \
             --push
 
       - name: Resolve image digest manifest
         if: steps.images.outputs.has_changes == 'true'
         working-directory: vn-news-cicd
         env:
-          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          PUBLISH_IMAGE_TAG: ${{ steps.image.outputs.tag }}
           VN_NEWS_IMAGE_REGISTRY: docker.io
           VN_NEWS_IMAGE_NAMESPACE: ${{ vars.VN_NEWS_IMAGE_NAMESPACE || secrets.DOCKERHUB_USERNAME }}
         run: |
@@ -127,7 +127,7 @@ jobs:
           image_manifest="$(uv run --no-dev python -m scripts.images.digests \
             --catalog ../vn-news-services/images.yaml \
             ${{ steps.images.outputs.image_args }} \
-            --tag "$IMAGE_TAG")"
+            --tag "$PUBLISH_IMAGE_TAG")"
           install -d image-manifest
           printf '%s\n' "$image_manifest" > image-manifest/image-manifest.json
           printf '### Image digest manifest\n\n```json\n%s\n```\n' "$image_manifest" >> "$GITHUB_STEP_SUMMARY"
