@@ -128,7 +128,18 @@ jobs:
             --catalog ../vn-news-services/images.yaml \
             ${{ steps.images.outputs.image_args }} \
             --tag "$IMAGE_TAG")"
+          install -d image-manifest
+          printf '%s\n' "$image_manifest" > image-manifest/image-manifest.json
           printf '### Image digest manifest\n\n```json\n%s\n```\n' "$image_manifest" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload image digest manifest
+        if: steps.images.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-manifest
+          path: vn-news-cicd/image-manifest/image-manifest.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Report skipped publish
         if: steps.images.outputs.has_changes != 'true'
